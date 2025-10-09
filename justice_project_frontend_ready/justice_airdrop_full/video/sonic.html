@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Interactive Video</title>
+<style>
+  body {
+    margin: 0;
+    background: #000;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+  }
+
+  video {
+    width: 600px;
+    height: 400px;
+    object-fit: cover;
+    border-radius: 10px;
+    cursor: pointer;
+  }
+
+  /* Sound button styling */
+  .sound-btn {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    background: rgba(0,0,0,0.6);
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    width: 60px;
+    height: 60px;
+    cursor: pointer;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 24px;
+    transition: background 0.2s ease, transform 0.1s ease;
+  }
+
+  .sound-btn:hover {
+    background: rgba(255,255,255,0.2);
+  }
+
+  .sound-btn:active {
+    transform: scale(0.95);
+  }
+</style>
+</head>
+<body>
+
+<div style="position: relative;">
+  <video id="video" autoplay muted loop playsinline>
+    <source src="./justice.mp4" type="video/mp4">
+    Your browser does not support HTML video.
+  </video>
+  <button id="soundBtn" class="sound-btn" title="Toggle sound">🔇</button>
+</div>
+
+<script>
+const video = document.getElementById('video');
+const soundBtn = document.getElementById('soundBtn');
+let lastTap = 0;
+
+// --- Single tap: Mute / Unmute ---
+video.addEventListener('click', () => {
+  const currentTime = new Date().getTime();
+  const tapGap = currentTime - lastTap;
+
+  if (tapGap < 300) {
+    // --- Double tap: Play / Pause ---
+    if (video.paused) {
+      video.play();
+    } else {
+      video.pause();
+    }
+  } else {
+    // --- Single tap: Toggle Mute ---
+    video.muted = !video.muted;
+    updateSoundIcon();
+  }
+
+  lastTap = currentTime;
+});
+
+// --- Sound button click: same as mute toggle ---
+soundBtn.addEventListener('click', () => {
+  video.muted = !video.muted;
+  updateSoundIcon();
+});
+
+// --- Update icon ---
+function updateSoundIcon() {
+  soundBtn.textContent = video.muted ? '🔇' : '🔊';
+}
+
+// --- Initialize ---
+updateSoundIcon();
+</script>
+
+  <script src="api.js"></script>
+</body>
+</html>

@@ -1,0 +1,235 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Tasks • Justice</title>
+  <link rel="stylesheet" href="../assets/style.css" />
+  <style>
+    body {
+      font-family: Inter, system-ui, Arial;
+      background: #071026;
+      color: #e6eef8;
+      margin: 0;
+      padding: 20px;
+    }
+
+    h2, h3 {
+      font-weight: 800;
+      letter-spacing: 0.6px;
+    }
+
+    /* === MAIN CONTAINER === */
+    .task-container {
+      max-width: 1100px;
+      margin: 0 auto;
+      position: relative;
+      z-index: 2;
+    }
+
+    /* === TASK LIST === */
+    .task-list {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+      margin-top: 20px;
+    }
+
+    .task-card {
+      background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.05);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+      padding: 18px;
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+      transition: all 0.25s ease;
+    }
+
+    .task-card:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 10px 30px rgba(0, 255, 180, 0.15);
+      border-color: rgba(167,255,235,0.15);
+    }
+
+    .task-bar {
+      width: 6px;
+      background: linear-gradient(180deg, #00f0ff, #00b4ff);
+      border-radius: 10px;
+      height: auto;
+    }
+
+    .task-meta {
+      flex: 1;
+    }
+
+    .task-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #a7ffeb;
+    }
+
+    .task-desc {
+      color: #9fb7ffcc;
+      margin-top: 8px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .task-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .btn {
+      background: linear-gradient(90deg,#22c1c3,#60d394);
+      border: none;
+      color: #042028;
+      font-weight: 700;
+      padding: 8px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+
+    .btn:hover {
+      opacity: 0.9;
+    }
+
+    .btn.ghost {
+      background: transparent;
+      color: #9fb7ffcc;
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    /* === HISTORY === */
+    .history {
+      margin-top: 24px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.05);
+      background: rgba(255,255,255,0.01);
+      padding: 16px;
+    }
+
+    .history .row {
+      display: flex;
+      justify-content: space-between;
+      padding: 10px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+
+    .status-pending { color: orange; }
+    .status-approved { color: #4ade80; }
+    .status-rejected { color: #ff6b6b; }
+
+    /* === BACKGROUND LINES === */
+    #solana-bg {
+      position: fixed;
+      inset: 0;
+      z-index: 1;
+      overflow: hidden;
+    }
+
+    .sol-line {
+      position: absolute;
+      left: -30%;
+      width: 200%;
+      height: 200px;
+      background: linear-gradient(90deg, rgba(0,240,255,0.06), rgba(0,120,255,0.03));
+      transform: rotate(12deg);
+      animation: move 20s linear infinite;
+      opacity: 0.6;
+    }
+
+    @keyframes move {
+      0% { transform: translateX(-100%) rotate(8deg); }
+      100% { transform: translateX(100%) rotate(8deg); }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="solana-bg">
+    <div class="sol-line" style="top:5%;animation-duration:22s"></div>
+    <div class="sol-line" style="top:25%;animation-duration:26s"></div>
+    <div class="sol-line" style="top:45%;animation-duration:30s"></div>
+    <div class="sol-line" style="top:65%;animation-duration:24s"></div>
+    <div class="sol-line" style="top:85%;animation-duration:28s"></div>
+  </div>
+
+  <div class="task-container">
+    <h2>Available Tasks</h2>
+    <div class="task-list" id="taskList">Loading tasks…</div>
+
+    <h3>Your Submissions</h3>
+    <div class="history" id="submissionHistory">Loading your submissions…</div>
+  </div>
+
+  <script src="../assets/api.js"></script>
+  <script>
+    const taskListEl = document.getElementById('taskList');
+    const histEl = document.getElementById('submissionHistory');
+
+    async function loadTasks() {
+      try {
+        const tasks = await apiFetch('/tasks/list');
+        if (!tasks || tasks.length === 0) {
+          taskListEl.innerHTML = '<div class="task-card">No active tasks</div>';
+          return;
+        }
+
+        taskListEl.innerHTML = tasks.map(t => `
+          <div class="task-card" data-id="${t.id}">
+            <div class="task-bar"></div>
+            <div class="task-meta">
+              <div class="task-title">${t.title}</div>
+              <div class="task-desc">
+                ${(t.instruction || '').slice(0, 240)}
+                ${t.link ? `<a href='${t.link}' target='_blank'>[link]</a>` : ''}
+              </div>
+              <div style="margin-top:8px;font-weight:700;color:#cfefff">Reward: ${t.reward} USD</div>
+            </div>
+            <div class="task-actions">
+              <button class="btn" onclick="openUploader(${t.id})">Submit Proof</button>
+            </div>
+          </div>
+        `).join('');
+      } catch (e) {
+        console.error(e);
+        taskListEl.innerHTML = '<div class="task-card">Failed to load tasks</div>';
+      }
+    }
+
+    async function loadMySubmissions() {
+      try {
+        const subs = await apiFetch('/tasks/my_submissions');
+        if (!subs || subs.length === 0) {
+          histEl.innerHTML = '<div class="row">No submissions yet</div>';
+          return;
+        }
+        histEl.innerHTML = subs.map(s => `
+          <div class="row">
+            <div>
+              #${s.id} • Task ${s.task_id}
+              <div style="font-size:12px;color:#9fb7ffcc">${new Date(s.created_at).toLocaleString()}</div>
+            </div>
+            <div>${s.proof ? `<a href="#" onclick="window.open('${s.proof}','_blank')">View</a>` : ''}</div>
+            <div class="status-${s.status}">${s.status}</div>
+          </div>
+        `).join('');
+      } catch (e) {
+        histEl.innerHTML = '<div class="row">Failed to load submissions</div>';
+      }
+    }
+
+    function openUploader(taskId) {
+      alert('Upload modal for Task #' + taskId);
+    }
+
+    loadTasks();
+    loadMySubmissions();
+  </script>
+</body>
+</html>

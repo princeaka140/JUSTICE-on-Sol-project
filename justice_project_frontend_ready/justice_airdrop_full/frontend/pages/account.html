@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Account | Profit Pilot</title>
+  <link rel="stylesheet" href="../assets/style.css" />
+  <style>
+    body {
+      font-family: "Poppins", sans-serif;
+      background: #0b0f19;
+      color: #fff;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 900px;
+      margin: 30px auto;
+      padding: 20px;
+    }
+
+    .card {
+      background: #141a2a;
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+      margin-bottom: 20px;
+      transition: 0.3s;
+    }
+
+    .card:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
+    }
+
+    .profile-section {
+      text-align: center;
+    }
+
+    .profile-pic {
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 3px solid #00c3ff;
+    }
+
+    .upload-btn {
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 8px 14px;
+      margin-top: 8px;
+      cursor: pointer;
+      font-weight: 200;
+    }
+
+    input[type="file"] {
+      display: none;
+    }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 10px;
+      text-align: left;
+      margin-top: 20px;
+    }
+
+    .info-grid div {
+      background: #1b2133;
+      padding: 10px;
+      border-radius: 8px;
+    }
+
+    .info-label {
+      color: #aaa;
+      font-size: 13px;
+    }
+
+    .info-value {
+      font-weight: bold;
+      font-size: 15px;
+      color: #00c3ff;
+    }
+
+    .transactions {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      color: #fff;
+    }
+
+    table th, table td {
+      padding: 10px;
+      text-align: left;
+      border-bottom: 1px solid #222;
+    }
+
+    table th {
+      color: #00c3ff;
+      text-transform: uppercase;
+      font-size: 13px;
+      letter-spacing: 1px;
+    }
+
+    .balance {
+      font-size: 1.4em;
+      font-weight: bold;
+      color: #00ff9d;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+
+    <!-- Profile Section -->
+    <div class="card profile-section">
+      <label for="fileInput">
+      <img id="profilePic" class="profile-pic" for="fileInput" src="../assets/default-avatar.png"/>
+      <input type="file" id="fileInput" accept="image/*" />
+      </label>
+      
+      <div class="info-grid" id="accountInfo">
+        Loading account data...
+      </div>
+    </div>
+
+    <!-- Wallet & Balance Section -->
+    <div class="card">
+      <h3>💰 Wallet Overview</h3>
+      <p><strong>Connected Wallet:</strong> <span id="walletAddress">Loading...</span></p>
+      <p>Current Balance: <span class="balance" id="userBalance">--</span></p>
+    </div>
+
+    <!-- Referral & Rank Section -->
+    <div class="card">
+      <h3>🏆 Referral Rank</h3>
+      <p>Your current leaderboard rank: <strong id="referralRank">Loading...</strong></p>
+    </div>
+
+    <!-- Transaction History -->
+    <div class="card transactions">
+      <h3>📜 Transaction History</h3>
+      <table id="txTable">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Type</th>
+            <th>Amount</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="txBody">
+          <tr><td colspan="4">Loading transactions...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+
+  <script src="../app.js"></script>
+  <script>
+    const profilePic = document.getElementById("profilePic");
+    const fileInput = document.getElementById("fileInput");
+    const accountInfo = document.getElementById("accountInfo");
+    const walletAddress = document.getElementById("walletAddress");
+    const userBalance = document.getElementById("userBalance");
+    const referralRank = document.getElementById("referralRank");
+    const txBody = document.getElementById("txBody");
+
+  const userId = window.currentUserId || 1; // Replace via WebApp auth when available
+
+    // 🧠 Load account info
+    async function loadAccount() {
+      try {
+    const data = await apiFetch(`/account`);
+        accountInfo.innerHTML = `
+          <div><span class="info-label">Username</span><br><span class="info-value">${data.username}</span></div>
+          <div><span class="info-label">User ID</span><br><span class="info-value">${data.user_id}</span></div>
+          <div><span class="info-label">Date Joined</span><br><span class="info-value">${data.date_joined}</span></div>
+          <div><span class="info-label">Level</span><br><span class="info-value">${data.level}</span></div>
+        `;
+        if (data.profile_photo) profilePic.src = data.profile_photo;
+      } catch (err) {
+        console.error("Account load failed:", err);
+        accountInfo.innerHTML = "<p>Error loading account</p>";
+      }
+    }
+
+    // 💼 Load wallet info
+    async function loadWallet() {
+      try {
+    const data = await apiFetch(`/wallet/info`);
+        walletAddress.textContent = data.wallet_address || "Not connected";
+        userBalance.textContent = `$${data.balance.toFixed(2)}`;
+      } catch (err) {
+        walletAddress.textContent = "Error";
+      }
+    }
+
+    // 🏆 Load referral rank
+    async function loadRank() {
+      try {
+  const leaderboard = await apiFetch(`/referral/leaderboard`);
+        const rank = leaderboard.findIndex(u => u.user_id === userId) + 1;
+        referralRank.textContent = rank > 0 ? `#${rank}` : "Unranked";
+      } catch (err) {
+        referralRank.textContent = "Unavailable";
+      }
+    }
+
+    // 📜 Load transaction history
+    async function loadTransactions() {
+      try {
+  const data = await apiFetch(`/wallet/transactions`);
+        if (!data || data.length === 0) {
+          txBody.innerHTML = "<tr><td colspan='4'>No transactions yet</td></tr>";
+          return;
+        }
+        txBody.innerHTML = data.map(tx => `
+          <tr>
+            <td>${tx.date}</td>
+            <td>${tx.type}</td>
+            <td>$${tx.amount}</td>
+            <td>${tx.status}</td>
+          </tr>
+        `).join("");
+      } catch (err) {
+        txBody.innerHTML = "<tr><td colspan='4'>Failed to load</td></tr>";
+      }
+    }
+
+    // 📸 Upload photo
+    fileInput.addEventListener("change", async () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      const formData = new FormData();
+      formData.append("photo", file);
+      formData.append("user_id", userId);
+
+      try {
+        const res = await fetch(`${window.BACKEND_URL}/account/upload_photo`, {
+          method: "POST",
+          body: formData,
+        });
+        const result = await res.json();
+        if (res.ok && result.photo_url) {
+          profilePic.src = result.photo_url;
+          alert("✅ Profile photo updated!");
+        } else {
+          alert("❌ Upload failed");
+        }
+      } catch (err) {
+        console.error("Upload error:", err);
+        alert("❌ Error uploading photo");
+      }
+    });
+
+    // 🚀 Initialize dashboard
+    loadAccount();
+    loadWallet();
+    loadRank();
+    loadTransactions();
+  </script>
+</body>
+</html>

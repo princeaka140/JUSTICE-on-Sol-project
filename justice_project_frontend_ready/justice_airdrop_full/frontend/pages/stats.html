@@ -1,0 +1,159 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Project Stats</title>
+  <link rel="stylesheet" href="/assets/style.css" />
+  <style>
+    body { font-family: Inter, system-ui, Arial; background: #0b1020; color: #e6eef8; margin: 0; padding: 24px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: 16px; }
+    .card { background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01)); border-radius: 5px; padding: 16px; box-shadow: 0 4px 18px rgba(2,6,23,0.6); border: 1px solid rgba(255,255,255,0.04); }
+    .card h3 { margin: 0 0 8px 0; font-size: 14px; color: #bcd6ff; }
+    .card .value { font-size: 28px; font-weight: 700; color: #fff; }
+    #chartCard { grid-column: 1 / -1; }
+    .muted { color: #9fb7ff66; font-size: 13px; }
+    .topbar { display:flex; align-items:center; justify-content:space-between; margin-bottom: 16px; }
+    .title { font-size: 20px; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="title">Live Project Stats</div>
+    <div class="muted">Auto-updating every 5s</div>
+  </div>
+
+  <div class="grid" id="cards">
+    <div class="card">
+      <h3>Registered Users</h3>
+      <div class="value" id="usersCount">-</div>
+      <div class="muted">Total users joined</div>
+    </div>
+    <div class="card">
+      <h3>Tasks</h3>
+      <div class="value" id="tasksCount">-</div>
+      <div class="muted">Available tasks</div>
+    </div>
+    <div class="card">
+      <h3>Submissions</h3>
+      <div class="value" id="subsTotal">-</div>
+      <div class="muted">Pending / Approved / Rejected</div>
+    </div>
+    <div class="card">
+      <h3>Withdrawals</h3>
+      <div class="value" id="withdrawalsTotal">-</div>
+      <div class="muted">Pending withdrawals</div>
+    </div>
+    <div class="card" id="chartCard">
+      <h3>Approved Submissions (live)</h3>
+      <canvas id="liveChart" height="120"></canvas>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="/assets/api.js"></script>
+  <script>
+    const usersCount = document.getElementById('usersCount')
+    const tasksCount = document.getElementById('tasksCount')
+    const subsTotal = document.getElementById('subsTotal')
+    const withdrawalsTotal = document.getElementById('withdrawalsTotal')
+
+    let chart
+
+    function renderChart(labels, data) {
+      const ctx = document.getElementById('liveChart').getContext('2d')
+      if (chart) {
+        chart.data.labels = labels
+        chart.data.datasets[0].data = data
+        chart.update()
+        return
+      }
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: 'Approved submissions',
+            data: data,
+            borderColor: '#6ee7b7',
+            backgroundColor: 'rgba(110,231,183,0.08)',
+            tension: 0.25,
+            fill: true,
+            pointRadius: 2,
+          }]
+        },
+        options: {
+          scales: { x: { ticks: { color: '#bcd6ff' } }, y: { ticks: { color: '#bcd6ff' }, beginAtZero: true } },
+          plugins: { legend: { labels: { color: '#bcd6ff' } } },
+          responsive: true,
+          maintainAspectRatio: false
+        }
+      })
+    }
+
+    async function fetchAndUpdate() {
+      try {
+        const summary = await apiFetch('/admin/stats/summary')
+        usersCount.textContent = summary.users
+        tasksCount.textContent = summary.tasks
+        subsTotal.textContent = `${summary.submissions.total} / ${summary.submissions.approved} / ${summary.submissions.rejected}`
+        withdrawalsTotal.textContent = `${summary.withdrawals.total} (${summary.withdrawals.pending} pending)`
+
+        const series = await apiFetch('/admin/stats/series?minutes=60&interval=60')
+        renderChart(series.labels.map(l => new Date(l).toLocaleTimeString()), series.counts)
+      } catch (err) {
+        console.error('stats fetch error', err)
+      }
+    }
+
+    // initial
+    fetchAndUpdate()
+    // poll every 5s
+    setInterval(fetchAndUpdate, 5000)
+  </script>
+</body>
+</html>
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Statistics</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <h2>📊 Statistics</h2>
+  <canvas id="statsChart"></canvas>
+
+  <script src="../app.js"></script>
+  <script>
+    async function loadStats() {
+      try {
+        const data = await apiFetch("/stats");
+
+        const ctx = document.getElementById('statsChart').getContext('2d');
+        new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: Object.keys(data),
+            datasets: [{
+              label: 'Stats',
+              data: Object.values(data),
+              backgroundColor: 'rgba(75, 192, 192, 0.6)'
+            }]
+          },
+          options: {
+            responsive: true,
+            scales: {
+              y: { beginAtZero: true }
+            }
+          }
+        });
+      } catch (err) {
+        console.error("Failed to load stats:", err);
+        document.body.insertAdjacentHTML("beforeend", "<p style='color:red'>Error loading stats.</p>");
+      }
+    }
+
+    loadStats();
+  </script>
+</body>
+</html>

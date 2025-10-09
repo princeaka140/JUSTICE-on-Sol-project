@@ -1,0 +1,6 @@
+aiogram==2.27
+fastapi==0.95.2
+uvicorn==0.22.0
+python-dotenv==1.0.0
+aiofiles==23.1.0
+jinja2==3.1.2
