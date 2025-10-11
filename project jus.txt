@@ -1,0 +1,409 @@
+// full_bot_all_integrations.bjs — Complete Bots.Business All-in-One Bot Script
+// Includes: Onboarding, 5-channel verification (1-2-2 layout), Menu (reply keyboard),
+// Balance (persistent), Referral, Task submissions with image upload, Withdrawals,
+// Admin group-only commands, and admin review (confirm/reject) with logging.
+
+// -----------------------------
+// IMPORTANT: Replace the placeholders below BEFORE DEPLOY
+// -----------------------------
+var ADMIN_IDS = [111111111,222222222,333333333];         // <-- Replace with your 3 admin Telegram numeric IDs
+var ADMIN_GROUP_ID = -1001234567890;                     // <-- Replace with your admin group chat id (supergroup id)
+var BROADCAST_CHANNEL = "@YourMainChannel";            // <-- Replace with your review/broadcast channel username or id
+var VERIFY_CHANNELS = ["@YourChannel1","@YourChannel2","@YourChannel3","@YourChannel4","@YourChannel5"]; //5 placeholders
+var BOT_USERNAME = "YourBotUsername";                  // <-- Replace with your bot username WITHOUT @
+
+var REFERRAL_REWARD_DEFAULT = 100;  // default referral reward units
+var BONUS_AMOUNT_DEFAULT = 50;      // default bonus amount
+var WITHDRAWAL_OPEN_DEFAULT = false; // default withdrawal state
+var TASK_REWARD_DEFAULT = 20;       // default task reward
+
+// -----------------------------
+// STORAGE HELPERS (Using Bot properties JSON storage)
+// For modest user counts this is fine. If you expect thousands of users,
+// migrate to external DB and adjust code accordingly.
+// -----------------------------
+function loadAll() {
+  var raw = Bot.getProperty("__users_store__");
+  if (!raw) return {};
+  try { return JSON.parse(raw); } catch(e) { return {}; }
+}
+function saveAll(db) { Bot.setProperty("__users_store__", JSON.stringify(db)); }
+function ensureUser(uid) {
+  var db = loadAll();
+  if (!db[uid]) {
+    db[uid] = {
+      id: uid,
+      balance: 0,
+      wallet: "",
+      referrals: [],
+      referredBy: null,
+      verified: false
+    };
+    saveAll(db);
+  }
+  return db[uid];
+}
+function updateUser(uid, obj) {
+  var db = loadAll(); db[uid] = obj; saveAll(db);
+}
+function getUser(uid) { var db = loadAll(); return db[uid] || null; }
+
+// Global properties defaults
+if (Bot.getProperty("REFERRAL_REWARD") === undefined) Bot.setProperty("REFERRAL_REWARD", REFERRAL_REWARD_DEFAULT);
+if (Bot.getProperty("BONUS_AMOUNT") === undefined) Bot.setProperty("BONUS_AMOUNT", BONUS_AMOUNT_DEFAULT);
+if (Bot.getProperty("WITHDRAWAL_OPEN") === undefined) Bot.setProperty("WITHDRAWAL_OPEN", WITHDRAWAL_OPEN_DEFAULT);
+if (Bot.getProperty("TASK_REWARD") === undefined) Bot.setProperty("TASK_REWARD", TASK_REWARD_DEFAULT);
+if (Bot.getProperty("bot_username") === undefined) Bot.setProperty("bot_username", BOT_USERNAME);
+
+// -----------------------------
+// UTILS
+// -----------------------------
+function isAdminId(id) { return ADMIN_IDS.indexOf(Number(id)) !== -1; }
+function sendEphemeralWarning(chat_id, text) {
+  try {
+    var m = Api.sendMessage({ chat_id: chat_id, text: text });
+    Bot.sleep(2000);
+    Api.deleteMessage({ chat_id: chat_id, message_id: m.message_id });
+  } catch (e) { /* ignore if delete not allowed */ }
+}
+function logAdmin(actionText) { try { Api.sendMessage({ chat_id: BROADCAST_CHANNEL, text: actionText }); } catch (e) { /* ignore */ } }
+
+// -----------------------------
+// START / REFERRAL / VERIFY FLOW
+// -----------------------------
+
+onCommand("start", function() {
+  var u = GetUser(); var uid = u.telegramid;
+  ensureUser(uid);
+
+  // Handle referral payload if present
+  var startParam = (request && request.data && request.data.start) ? request.data.start : null;
+  if (startParam && startParam != String(uid)) {
+    var me = ensureUser(uid);
+    if (!me.referredBy) { me.referredBy = startParam; updateUser(uid, me); }
+  }
+
+  // Send welcome message with reply keyboard Continue
+  var welcome = "👋 Hello " + (u.first_name || "Trader") + "!\n\nWelcome to our trading hub — edit this message to your brand intro.";
+  var kb = { keyboard: [["➡️ Continue"]], resize_keyboard: true, one_time_keyboard: true };
+  Api.sendMessage({ chat_id: uid, text: welcome, reply_markup: JSON.stringify(kb) });
+});
+
+// Continue -> show verification channel inline buttons (1-2-2 layout)
+on("message", function() {
+  if (!request.text) return;
+  var text = request.text.trim();
+  var chat_id = request.chat.id;
+
+  if (text === "➡️ Continue") {
+    var ch = VERIFY_CHANNELS;
+    var ik = [
+      [ { text: ch[0], url: "https://t.me/" + ch[0].replace("@","") } ],
+      [ { text: ch[1], url: "https://t.me/" + ch[1].replace("@","") }, { text: ch[2], url: "https://t.me/" + ch[2].replace("@","") } ],
+      [ { text: ch[3], url: "https://t.me/" + ch[3].replace("@","") }, { text: ch[4], url: "https://t.me/" + ch[4].replace("@","") } ],
+      [ { text: "✅ Verify", callback_data: "verify_now" } ]
+    ];
+    Api.sendMessage({ chat_id: chat_id, text: "📢 Please join all the channels below, then press Verify.", reply_markup: JSON.stringify({ inline_keyboard: ik }) });
+    return;
+  }
+
+  // MENU navigation (reply keyboard) triggers
+  if (text === "🎯 Task") { Bot.runCommand("task"); return; }
+  if (text === "🎁 Bonus") { Bot.runCommand("bonus"); return; }
+  if (text === "💼 Trade") { Bot.runCommand("trade"); return; }
+  if (text === "💳 Set Wallet") { Bot.runCommand("setwallet"); return; }
+  if (text === "👥 Referral") { Bot.runCommand("referral"); return; }
+  if (text === "💰 Balance") { Bot.runCommand("balance"); return; }
+  if (text === "ℹ️ About Us") {
+    var ik = { inline_keyboard: [[ { text: "Visit Website", url: "https://your-aboutus-link.com" } ]] };
+    Api.sendMessage({ chat_id: chat_id, text: "Opening About Us...", reply_markup: JSON.stringify(ik) }); return;
+  }
+  if (text === "💬 Support") {
+    var ik = { inline_keyboard: [[ { text: "Open Support", url: "https://t.me/YourSupportGroup" } ]] };
+    Api.sendMessage({ chat_id: chat_id, text: "Contact Support", reply_markup: JSON.stringify(ik) }); return;
+  }
+  if (text === "📊 Stats") {
+    var ik = { inline_keyboard: [[ { text: "Open Stats Dashboard", url: "https://your-stats-page.com" } ]] };
+    Api.sendMessage({ chat_id: chat_id, text: "Open Stats Dashboard", reply_markup: JSON.stringify(ik) }); return;
+  }
+
+  // Wallet input handling (awaiting wallet)
+  var awaiting = Bot.getProperty("awaiting_wallet_" + request.from.id);
+  if (awaiting) {
+    var addr = request.text.trim();
+    var user = ensureUser(request.from.id);
+    user.wallet = addr;
+    updateUser(request.from.id, user);
+    Bot.removeProperty("awaiting_wallet_" + request.from.id);
+    Api.sendMessage({ chat_id: request.chat.id, text: "✅ Wallet saved: " + addr });
+    return;
+  }
+
+  // pending upload handling handled elsewhere in message/photo handlers
+});
+
+// Callback handler for verify and admin buttons
+Bot.onCallbackQuery(function() {
+  var data = request.data;
+  var from = request.from;
+  if (!data) return;
+
+  // Verification
+  if (data === "verify_now") {
+    var uid = from.id; var missing = [];
+    for (var i = 0; i < VERIFY_CHANNELS.length; i++) {
+      try {
+        var st = Bot.getChatMember(VERIFY_CHANNELS[i], uid);
+        if (!st || (st.status !== 'member' && st.status !== 'administrator' && st.status !== 'creator')) missing.push(VERIFY_CHANNELS[i]);
+      } catch (e) { missing.push(VERIFY_CHANNELS[i]); }
+    }
+    if (missing.length > 0) {
+      Api.answerCallbackQuery({ callback_query_id: request.id, text: "Please join all required channels and try again.", show_alert: true });
+      return;
+    }
+    var user = ensureUser(uid);
+    if (!user.verified) {
+      user.verified = true;
+      // credit referrer if exists
+      if (user.referredBy) {
+        var ref = ensureUser(user.referredBy);
+        var reward = Number(Bot.getProperty("REFERRAL_REWARD") || REFERRAL_REWARD_DEFAULT);
+        ref.balance = Number(ref.balance || 0) + reward;
+        ref.referrals = ref.referrals || [];
+        ref.referrals.push(uid);
+        updateUser(user.referredBy, ref);
+        try { Api.sendMessage({ chat_id: user.referredBy, text: "🎉 You earned " + reward + " for referring a verified user!" }); } catch (e) {}
+      }
+      updateUser(uid, user);
+    }
+    Api.answerCallbackQuery({ callback_query_id: request.id, text: "Verification successful!" });
+    try { Bot.runCommand("menu"); } catch (e) { Api.sendMessage({ chat_id: uid, text: "✅ Verification successful! Use /menu to open the menu." }); }
+    return;
+  }
+
+  // Admin confirm/reject handling callbacks encoded as strings like: task_confirm:USERID or withdraw_confirm:USERID:AMOUNT
+  if (data && data.indexOf("task_confirm:") === 0) {
+    var parts = data.split(":"); var target = parts[1]; handleAdminTaskConfirm(request.from.id, target); Api.answerCallbackQuery({ callback_query_id: request.id, text: "Task approved." }); return;
+  }
+  if (data && data.indexOf("task_reject:") === 0) {
+    var parts = data.split(":"); var target = parts[1]; handleAdminTaskReject(request.from.id, target); Api.answerCallbackQuery({ callback_query_id: request.id, text: "Task rejected." }); return;
+  }
+  if (data && data.indexOf("withdraw_confirm:") === 0) {
+    var parts = data.split(":"); var target = parts[1]; var amount = Number(parts[2]); handleAdminWithdrawConfirm(request.from.id, target, amount); Api.answerCallbackQuery({ callback_query_id: request.id, text: "Withdrawal approved." }); return;
+  }
+  if (data && data.indexOf("withdraw_reject:") === 0) {
+    var parts = data.split(":"); var target = parts[1]; handleAdminWithdrawReject(request.from.id, target); Api.answerCallbackQuery({ callback_query_id: request.id, text: "Withdrawal rejected." }); return;
+  }
+});
+
+// -----------------------------
+// MENU COMMANDS (task, bonus, trade, setwallet, referral, balance)
+// -----------------------------
+
+onCommand("menu", function() {
+  var uid = request.from.id;
+  var kb = { keyboard: [["🎯 Task","🎁 Bonus"],["💼 Trade","💳 Set Wallet"],["👥 Referral","💰 Balance"],["ℹ️ About Us","💬 Support","📊 Stats"]], resize_keyboard: true };
+  Api.sendMessage({ chat_id: uid, text: "🏠 Main Menu — Choose an option:", reply_markup: JSON.stringify(kb) });
+});
+
+onCommand("task", function() {
+  var uid = request.from.id;
+  var txt = "🎯 Tasks:\n1) Share our channel\n2) Upload proof (images) to earn rewards.\n\nPress Submit Proof to start.";
+  var ik = { inline_keyboard: [[ { text: "Submit Proof", callback_data: "start_submit_task" } ]] };
+  Api.sendMessage({ chat_id: uid, text: txt, reply_markup: JSON.stringify(ik) });
+});
+
+// Start submit task flow via callback -> set pending state
+Bot.onCallbackQuery(function(){
+  if (request.data === "start_submit_task") {
+    var uid = request.from.id;
+    // create pending store
+    Bot.setProperty("pending_task_" + uid, JSON.stringify({ files: [], text: "" }));
+    Api.sendMessage({ chat_id: uid, text: "📤 Send your proof images and a short description now. When finished press Done below.", reply_markup: JSON.stringify({ inline_keyboard: [[ { text: "Done", callback_data: "finish_task_submit" } ]] }) });
+  }
+});
+
+// Finish task submit -> forward to review channel with admin buttons
+function finishTaskSubmit(uid) {
+  var raw = Bot.getProperty("pending_task_" + uid);
+  if (!raw) { Api.sendMessage({ chat_id: uid, text: "No pending submission found. Use /task to start." }); return; }
+  var pending = JSON.parse(raw);
+  var user = GetUser();
+  var msgText = "📝 New Task Submission\nUser: " + (user.first_name || "") + " (" + uid + ")\n\nDescription:\n" + (pending.text || "(no description)");
+
+  // Inline buttons encoded with callback data
+  var ik = { inline_keyboard: [[ { text: "✅ Confirm", callback_data: "task_confirm:" + uid }, { text: "❌ Reject", callback_data: "task_reject:" + uid } ]] };
+  Api.sendMessage({ chat_id: BROADCAST_CHANNEL, text: msgText });
+  // forward photos if any
+  if (pending.files && pending.files.length > 0) {
+    for (var i = 0; i < pending.files.length; i++) {
+      try { Api.sendPhoto({ chat_id: BROADCAST_CHANNEL, photo: pending.files[i] }); } catch (e) { }
+    }
+  }
+  Api.sendMessage({ chat_id: BROADCAST_CHANNEL, text: "Admin review required:", reply_markup: JSON.stringify(ik) });
+  Api.sendMessage({ chat_id: uid, text: "✅ Your submission has been sent for review." });
+  Bot.removeProperty("pending_task_" + uid);
+}
+
+// callback finish handler
+Bot.onCallbackQuery(function(){ if (request.data === "finish_task_submit") { finishTaskSubmit(request.from.id); Api.answerCallbackQuery({ callback_query_id: request.id, text: "Submission sent for review." }); } });
+
+// Message & Photo handlers for pending submissions
+on("message", function() {
+  var uid = request.from.id;
+  var raw = Bot.getProperty("pending_task_" + uid);
+  if (!raw) return;
+  var pending = JSON.parse(raw);
+  // photos sent
+  if (request.photo) {
+    // request.photo is array of sizes; take largest
+    var arr = request.photo; var last = arr[arr.length - 1]; var fileId = last.file_id || last.file_id;
+    pending.files.push(fileId);
+    Bot.setProperty("pending_task_" + uid, JSON.stringify(pending));
+    Api.sendMessage({ chat_id: uid, text: "✅ Image received. Send more or press Done." });
+    return;
+  }
+  // text description
+  if (request.text) {
+    pending.text = (pending.text || "") + "\n" + request.text;
+    Bot.setProperty("pending_task_" + uid, JSON.stringify(pending));
+    Api.sendMessage({ chat_id: uid, text: "✅ Description saved. Send more or press Done." });
+    return;
+  }
+});
+
+// Admin handlers for task confirm/reject
+function handleAdminTaskConfirm(adminId, targetId) {
+  // check admin rights and group context
+  if (request.chat.id !== ADMIN_GROUP_ID) { sendEphemeralWarning(request.chat.id, "⚠️ This action must be done in the admin group."); return; }
+  if (!isAdminId(adminId)) { sendEphemeralWarning(request.chat.id, "⛔ You are not authorized!"); return; }
+  var reward = Number(Bot.getProperty("TASK_REWARD") || TASK_REWARD_DEFAULT);
+  var user = ensureUser(targetId);
+  user.balance = Number(user.balance || 0) + reward; updateUser(targetId, user);
+  try { Api.sendMessage({ chat_id: targetId, text: "✅ Your task has been approved. Reward: " + reward }); } catch (e) {}
+  Api.sendMessage({ chat_id: ADMIN_GROUP_ID, text: "✅ Task approved for user: " + targetId });
+  logAdmin("Task approved for user: " + targetId + " by admin: " + adminId);
+}
+function handleAdminTaskReject(adminId, targetId) {
+  if (request.chat.id !== ADMIN_GROUP_ID) { sendEphemeralWarning(request.chat.id, "⚠️ This action must be done in the admin group."); return; }
+  if (!isAdminId(adminId)) { sendEphemeralWarning(request.chat.id, "⛔ You are not authorized!"); return; }
+  try { Api.sendMessage({ chat_id: targetId, text: "❌ Your task submission was rejected by admin." }); } catch (e) {}
+  Api.sendMessage({ chat_id: ADMIN_GROUP_ID, text: "❌ Task rejected for user: " + targetId });
+  logAdmin("Task rejected for user: " + targetId + " by admin: " + adminId);
+}
+
+// -----------------------------
+// BONUS, REFERRAL, BALANCE, SETWALLET
+// -----------------------------
+
+onCommand("bonus", function() {
+  var uid = request.from.id; var u = ensureUser(uid);
+  var bonus = Number(Bot.getProperty("BONUS_AMOUNT") || BONUS_AMOUNT_DEFAULT);
+  u.balance = Number(u.balance || 0) + bonus; updateUser(uid, u);
+  Api.sendMessage({ chat_id: uid, text: "🎁 Bonus added: " + bonus + "\nCurrent balance: " + u.balance });
+});
+
+onCommand("referral", function() {
+  var uid = request.from.id; var u = ensureUser(uid);
+  var botname = Bot.getProperty("bot_username") || BOT_USERNAME;
+  var link = "https://t.me/" + botname + "?start=" + uid;
+  var earned = (u.referrals ? u.referrals.length * Number(Bot.getProperty("REFERRAL_REWARD") || REFERRAL_REWARD_DEFAULT) : 0);
+  Api.sendMessage({ chat_id: uid, text: "👥 Your referral link:\n" + link + "\nReferrals: " + (u.referrals ? u.referrals.length : 0) + "\nEarned: " + earned });
+});
+
+onCommand("balance", function() { var uid = request.from.id; var u = ensureUser(uid); Api.sendMessage({ chat_id: uid, text: "💰 Balance: " + (u.balance || 0) + "\nWallet: " + (u.wallet || "(not set)") }); });
+
+onCommand("setwallet", function() { var uid = request.from.id; Api.sendMessage({ chat_id: uid, text: "🔐 Please send your wallet address now." }); Bot.setProperty("awaiting_wallet_" + uid, "1"); });
+
+// -----------------------------
+// WITHDRAWALS
+// -----------------------------
+
+onCommand("withdraw", function() {
+  var uid = request.from.id; if (!Bot.getProperty("WITHDRAWAL_OPEN")) { Api.sendMessage({ chat_id: uid, text: "❌ Withdrawals are currently closed." }); return; }
+  Api.sendMessage({ chat_id: uid, text: "💸 To request withdrawal send: /requestwithdraw <amount>" });
+});
+
+onCommand(/requestwithdraw (.+)/, function(match) {
+  var amount = Number(match[1]); var uid = request.from.id; var u = ensureUser(uid);
+  if (!Bot.getProperty("WITHDRAWAL_OPEN")) { Api.sendMessage({ chat_id: uid, text: "❌ Withdrawals are closed." }); return; }
+  if (isNaN(amount) || amount <= 0 || amount > Number(u.balance || 0)) { Api.sendMessage({ chat_id: uid, text: "❌ Invalid amount." }); return; }
+  // send to broadcast channel with inline approve/reject
+  var ik = { inline_keyboard: [[ { text: "✅ Approve", callback_data: "withdraw_confirm:" + uid + ":" + amount }, { text: "❌ Reject", callback_data: "withdraw_reject:" + uid + ":" + amount } ]] };
+  Api.sendMessage({ chat_id: BROADCAST_CHANNEL, text: "💸 Withdrawal request\nUser: " + uid + "\nAmount: " + amount + "\nWallet: " + (u.wallet || "(not set)"), reply_markup: JSON.stringify(ik) });
+  Api.sendMessage({ chat_id: uid, text: "✅ Your withdrawal request has been sent for review." });
+});
+
+function handleAdminWithdrawConfirm(adminId, targetId, amount) {
+  if (request.chat.id !== ADMIN_GROUP_ID) { sendEphemeralWarning(request.chat.id, "⚠️ This action must be done in the admin group."); return; }
+  if (!isAdminId(adminId)) { sendEphemeralWarning(request.chat.id, "⛔ You are not authorized!"); return; }
+  var u = ensureUser(targetId);
+  if (Number(u.balance || 0) < amount) { Api.sendMessage({ chat_id: ADMIN_GROUP_ID, text: "Insufficient funds or user not found." }); return; }
+  u.balance = Number(u.balance) - amount; updateUser(targetId, u);
+  try { Api.sendMessage({ chat_id: targetId, text: "✅ Your withdrawal of " + amount + " has been approved by admin." }); } catch (e) {}
+  Api.sendMessage({ chat_id: ADMIN_GROUP_ID, text: "✅ Withdrawal approved for user: " + targetId + " amount: " + amount });
+  logAdmin("Withdrawal approved for user: " + targetId + " amount: " + amount + " by admin: " + adminId);
+  // NOTE: Integrate real payout API here if needed.
+}
+function handleAdminWithdrawReject(adminId, targetId) {
+  if (request.chat.id !== ADMIN_GROUP_ID) { sendEphemeralWarning(request.chat.id, "⚠️ This action must be done in the admin group."); return; }
+  if (!isAdminId(adminId)) { sendEphemeralWarning(request.chat.id, "⛔ You are not authorized!"); return; }
+  try { Api.sendMessage({ chat_id: targetId, text: "❌ Your withdrawal request was rejected by admin." }); } catch (e) {}
+  Api.sendMessage({ chat_id: ADMIN_GROUP_ID, text: "❌ Withdrawal rejected for user: " + targetId });
+  logAdmin("Withdrawal rejected for user: " + targetId + " by admin: " + adminId);
+}
+
+// -----------------------------
+// ADMIN GROUP-ONLY COMMANDS (text commands executed in group)
+// Usage examples to run inside admin group:
+// /addbalance <userId> <amount>
+// /deductbalance <userId> <amount>
+// /openwithdrawal
+// /closewithdrawal
+// /broadcast <message>
+// /addtask <task text>
+// /updatereward <amount>
+// -----------------------------
+
+onCommand(/addbalance (.+) (.+)/, function(match) {
+  var tid = match[1], amt = Number(match[2]), uid = request.from.id;
+  if (request.chat.id !== ADMIN_GROUP_ID) { sendEphemeralWarning(request.chat.id, "⚠️ Run this inside admin group only."); return; }
+  if (!isAdminId(uid)) { sendEphemeralWarning(request.chat.id, "⛔ You are not authorized!"); return; }
+  var u = ensureUser(tid); u.balance = Number(u.balance || 0) + amt; updateUser(tid, u);
+  Api.sendMessage({ chat_id: ADMIN_GROUP_ID, text: "✅ Added " + amt + " to user " + tid }); logAdmin("addbalance " + tid + " " + amt + " by " + uid);
+});
+
+onCommand(/deductbalance (.+) (.+)/, function(match) {
+  var tid = match[1], amt = Number(match[2]), uid = request.from.id;
+  if (request.chat.id !== ADMIN_GROUP_ID) { sendEphemeralWarning(request.chat.id, "⚠️ Run this inside admin group only."); return; }
+  if (!isAdminId(uid)) { sendEphemeralWarning(request.chat.id, "⛔ You are not authorized!"); return; }
+  var u = ensureUser(tid); u.balance = Number(u.balance || 0) - amt; if (u.balance < 0) u.balance = 0; updateUser(tid, u);
+  Api.sendMessage({ chat_id: ADMIN_GROUP_ID, text: "✅ Deducted " + amt + " from user " + tid }); logAdmin("deductbalance " + tid + " " + amt + " by " + uid);
+});
+
+onCommand("openwithdrawal", function() { var uid = request.from.id; if (request.chat.id !== ADMIN_GROUP_ID) { sendEphemeralWarning(request.chat.id, "⚠️ Run inside admin group only."); return; } if (!isAdminId(uid)) { sendEphemeralWarning(request.chat.id, "⛔ You are not authorized!"); return; } Bot.setProperty("WITHDRAWAL_OPEN", true); Api.sendMessage({ chat_id: ADMIN_GROUP_ID, text: "🔓 Withdrawals are now OPEN." }); logAdmin("openwithdrawal by " + uid); });
+
+onCommand("closewithdrawal", function() { var uid = request.from.id; if (request.chat.id !== ADMIN_GROUP_ID) { sendEphemeralWarning(request.chat.id, "⚠️ Run inside admin group only."); return; } if (!isAdminId(uid)) { sendEphemeralWarning(request.chat.id, "⛔ You are not authorized!"); return; } Bot.setProperty("WITHDRAWAL_OPEN", false); Api.sendMessage({ chat_id: ADMIN_GROUP_ID, text: "🔒 Withdrawals are now CLOSED." }); logAdmin("closewithdrawal by " + uid); });
+
+onCommand(/broadcast (.+)/, function(match) { var msg = match[1]; var uid = request.from.id; if (request.chat.id !== ADMIN_GROUP_ID) { sendEphemeralWarning(request.chat.id, "⚠️ Run inside admin group only."); return; } if (!isAdminId(uid)) { sendEphemeralWarning(request.chat.id, "⛔ You are not authorized!"); return; } var db = loadAll(); var count = 0; for (var k in db) { try { Api.sendMessage({ chat_id: db[k].id, text: msg }); count++; } catch (e) {} } Api.sendMessage({ chat_id: ADMIN_GROUP_ID, text: "📣 Broadcast sent to " + count + " users." }); logAdmin("broadcast by " + uid + " message: " + msg); });
+
+onCommand(/addtask (.+)/, function(match) { var task = match[1]; var uid = request.from.id; if (request.chat.id !== ADMIN_GROUP_ID) { sendEphemeralWarning(request.chat.id, "⚠️ Run inside admin group only."); return; } if (!isAdminId(uid)) { sendEphemeralWarning(request.chat.id, "⛔ You are not authorized!"); return; } Api.sendMessage({ chat_id: BROADCAST_CHANNEL, text: "🎯 New Task: " + task }); Api.sendMessage({ chat_id: ADMIN_GROUP_ID, text: "✅ Task posted to channel." }); logAdmin("addtask by " + uid + " task: " + task); });
+
+onCommand(/updatereward (.+)/, function(match) { var amount = Number(match[1]); var uid = request.from.id; if (request.chat.id !== ADMIN_GROUP_ID) { sendEphemeralWarning(request.chat.id, "⚠️ Run inside admin group only."); return; } if (!isAdminId(uid)) { sendEphemeralWarning(request.chat.id, "⛔ You are not authorized!"); return; } Bot.setProperty("REFERRAL_REWARD", amount); Api.sendMessage({ chat_id: ADMIN_GROUP_ID, text: "✅ Referral reward updated to " + amount }); logAdmin("updatereward to " + amount + " by " + uid); });
+
+// -----------------------------
+// CALLBACKS for admin actions via inline keyboard are processed earlier with Bot.onCallbackQuery
+// but ensure the handlers call the appropriate functions depending on request context.
+// Because callback handlers need access to request.chat.id for group check, we validate in handler functions.
+// The helper functions handleAdminTaskConfirm, handleAdminTaskReject, handleAdminWithdrawConfirm, handleAdminWithdrawReject
+// used earlier require availability of "request" for chat context; we used checks inside them.
+// -----------------------------
+
+// -----------------------------
+// Final Notes / Deployment
+// - Replace placeholders at top: ADMIN_IDS, ADMIN_GROUP_ID, BROADCAST_CHANNEL, VERIFY_CHANNELS, BOT_USERNAME
+// - For large userbases, migrate storage to external DB (SQLite/Postgres).
+// - Add your payout integration in handleAdminWithdrawConfirm.
+// - Test each flow in a private environment before going live.
+// -----------------------------
+
