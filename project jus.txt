@@ -40,33 +40,183 @@ const CURRENCY_SYMBOL = "⚖️";
 const BOT_NAME = "JUSTICE on Sol";
 
 let usersDB = {};
+let taskSubmissions = {};
+let globalTasks = [];
+let taskIdCounter = 1;
 let botSettings = {
   referralReward: REFERRAL_REWARD,
   bonusAmount: DEFAULT_BONUS_AMOUNT,
   withdrawalOpen: false,
   tasksSubmitted: 0,
+  tasksApproved: 0,
+  tasksRejected: 0,
   taskReward: 0
 };
 
 let pendingTasks = {};
 let awaitingWallet = {};
 
-function ensureUser(uid) {
+function ensureUser(uid, username = null, updateActivity = false) {
   if (!usersDB[uid]) {
     usersDB[uid] = {
       id: uid,
+      username: username || "",
       balance: 0,
       wallet: "",
       referrals: [],
       referredBy: null,
-      verified: false
+      verified: false,
+      registeredAt: Date.now(),
+      lastSeen: Date.now(),
+      messageCount: updateActivity ? 1 : 0,
+      activityScore: 0,
+      completedTasks: []
     };
+    
+    if (updateActivity) {
+      const hoursSinceRegistration = (Date.now() - usersDB[uid].registeredAt) / (1000 * 60 * 60);
+      if (hoursSinceRegistration > 0) {
+        usersDB[uid].activityScore = usersDB[uid].messageCount / Math.max(hoursSinceRegistration, 0.01);
+      }
+    }
+  } else {
+    if (username) usersDB[uid].username = username;
+    usersDB[uid].lastSeen = Date.now();
+    
+    if (updateActivity) {
+      usersDB[uid].messageCount = (usersDB[uid].messageCount || 0) + 1;
+      
+      const hoursSinceRegistration = (Date.now() - usersDB[uid].registeredAt) / (1000 * 60 * 60);
+      if (hoursSinceRegistration > 0) {
+        usersDB[uid].activityScore = usersDB[uid].messageCount / Math.max(hoursSinceRegistration, 0.01);
+      }
+    }
   }
   return usersDB[uid];
 }
 
 function isAdminId(id) {
   return ADMIN_IDS.indexOf(Number(id)) !== -1;
+}
+
+async function getUserIdentifier(userId) {
+  const user = usersDB[userId];
+  if (user && user.username) {
+    return `@${user.username}`;
+  }
+  return userId;
+}
+
+async function resolveUserInput(input) {
+  if (input.startsWith('@')) {
+    const username = input.substring(1).toLowerCase();
+    for (const uid in usersDB) {
+      if (usersDB[uid].username && usersDB[uid].username.toLowerCase() === username) {
+        return usersDB[uid].id;
+      }
+    }
+    return null;
+  }
+  return input;
+}
+
+function analyzeReferralPattern(userId) {
+  const user = usersDB[userId];
+  if (!user || !user.referrals || user.referrals.length === 0) {
+    return { realRefs: 0, suspiciousRefs: 0, percentage: 100, score: "🌟🌟🌟🌟🌟" };
+  }
+
+  const referrals = user.referrals;
+  let suspiciousCount = 0;
+  const referralTimes = [];
+
+  for (const refId of referrals) {
+    const refUser = usersDB[refId];
+    if (!refUser) continue;
+
+    let suspiciousScore = 0;
+    
+    const accountAge = (Date.now() - refUser.registeredAt) / (1000 * 60 * 60);
+    const accountAgeDays = accountAge / 24;
+    
+    if (accountAgeDays > 2 && refUser.messageCount < 3) suspiciousScore += 2;
+    
+    if (accountAgeDays > 1 && refUser.activityScore < 0.2) suspiciousScore += 1;
+    
+    if (accountAgeDays > 3 && !refUser.verified) suspiciousScore += 2;
+    
+    if (accountAgeDays > 7 && refUser.messageCount === 0) suspiciousScore += 2;
+
+    referralTimes.push(refUser.registeredAt);
+    
+    if (suspiciousScore >= 4) {
+      suspiciousCount++;
+    }
+  }
+
+  referralTimes.sort((a, b) => a - b);
+  let rapidSignups = 0;
+  for (let i = 1; i < referralTimes.length; i++) {
+    const timeDiff = (referralTimes[i] - referralTimes[i - 1]) / 1000;
+    if (timeDiff < 30) {
+      rapidSignups++;
+    }
+  }
+  
+  if (rapidSignups > 5) {
+    suspiciousCount += Math.floor(rapidSignups / 3);
+  }
+
+  const realRefs = Math.max(0, referrals.length - suspiciousCount);
+  const percentage = referrals.length > 0 ? (realRefs / referrals.length) * 100 : 100;
+  const score = getStarRating(percentage);
+
+  return {
+    realRefs: realRefs,
+    suspiciousRefs: suspiciousCount,
+    percentage: percentage,
+    score: score
+  };
+}
+
+function analyzeSystemHealth() {
+  const totalUsers = Object.keys(usersDB).length;
+  if (totalUsers === 0) {
+    return { realUsers: 0, suspiciousUsers: 0, percentage: 100, score: "🌟🌟🌟🌟🌟" };
+  }
+
+  let suspiciousUsers = 0;
+
+  for (const uid in usersDB) {
+    const user = usersDB[uid];
+    let suspiciousScore = 0;
+
+    const accountAge = (Date.now() - user.registeredAt) / (1000 * 60 * 60);
+    const accountAgeDays = accountAge / 24;
+    
+    if (accountAgeDays > 2 && user.messageCount < 2) suspiciousScore += 2;
+    
+    if (accountAgeDays > 1 && user.activityScore < 0.1) suspiciousScore += 1;
+    
+    if (accountAgeDays > 3 && !user.verified) suspiciousScore += 2;
+    
+    if (accountAgeDays > 7 && user.messageCount === 0) suspiciousScore += 2;
+
+    if (suspiciousScore >= 4) {
+      suspiciousUsers++;
+    }
+  }
+
+  const realUsers = totalUsers - suspiciousUsers;
+  const percentage = totalUsers > 0 ? (realUsers / totalUsers) * 100 : 100;
+  const score = getStarRating(percentage);
+
+  return {
+    realUsers: realUsers,
+    suspiciousUsers: suspiciousUsers,
+    percentage: percentage,
+    score: score
+  };
 }
 
 async function logAdmin(text) {
@@ -77,26 +227,51 @@ async function logAdmin(text) {
   }
 }
 
-async function sendEphemeralWarning(chatId, text) {
+async function sendEphemeralWarning(chatId, text, timeout = 2000) {
   try {
     const msg = await bot.sendMessage(chatId, text);
     setTimeout(async () => {
       try {
         await bot.deleteMessage(chatId, msg.message_id);
       } catch (e) {}
-    }, 2000);
+    }, timeout);
   } catch (e) {}
+}
+
+async function sendAutoDeleteMessage(chatId, text, timeout = 120000) {
+  try {
+    const msg = await bot.sendMessage(chatId, text);
+    setTimeout(async () => {
+      try {
+        await bot.deleteMessage(chatId, msg.message_id);
+      } catch (e) {}
+    }, timeout);
+    return msg;
+  } catch (e) {
+    return null;
+  }
+}
+
+function getStarRating(percentage) {
+  if (percentage >= 100) return "🌟🌟🌟🌟🌟";
+  if (percentage >= 70) return "🌟🌟🌟🌟";
+  if (percentage >= 40) return "🌟🌟🌟";
+  if (percentage >= 25) return "🌟🌟";
+  if (percentage >= 10) return "🌟";
+  if (percentage >= 8) return "❌";
+  return "❌❌❌❌❌";
 }
 
 bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
+  const username = msg.from.username || "";
   const startParam = match[1];
 
-  ensureUser(userId);
+  ensureUser(userId, username);
 
   if (startParam && startParam != String(userId)) {
-    const me = ensureUser(userId);
+    const me = ensureUser(userId, username);
     if (!me.referredBy) {
       me.referredBy = startParam;
     }
@@ -116,9 +291,12 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
+  const username = msg.from.username || "";
   const text = msg.text;
 
   if (!text) return;
+
+  ensureUser(userId, username, true);
 
   if (text === "➡️ Continue") {
     const ch = VERIFY_CHANNELS;
@@ -165,6 +343,10 @@ bot.on('message', async (msg) => {
     await handleBalance(chatId, userId);
     return;
   }
+  if (text === "💸 Withdrawal") {
+    await handleWithdrawalMenu(chatId, userId);
+    return;
+  }
   if (text === "ℹ️ About Us") {
     await bot.sendMessage(chatId, "About Us", {
       reply_markup: {
@@ -189,7 +371,7 @@ bot.on('message', async (msg) => {
 
   if (awaitingWallet[userId]) {
     const addr = text.trim();
-    const user = ensureUser(userId);
+    const user = ensureUser(userId, username);
     user.wallet = addr;
     delete awaitingWallet[userId];
     await bot.sendMessage(chatId, `✅ Wallet saved: ${addr}`);
@@ -237,7 +419,7 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    const user = ensureUser(userId);
+    const user = ensureUser(userId, query.from.username);
     if (!user.verified) {
       user.verified = true;
       if (user.referredBy) {
@@ -258,7 +440,7 @@ bot.on('callback_query', async (query) => {
   }
 
   if (data === "start_submit_task") {
-    pendingTasks[userId] = { files: [], text: "" };
+    pendingTasks[userId] = { files: [], text: "", userId: userId };
     await bot.sendMessage(chatId, "📤 Send proof images and description. Press Done when finished.", {
       reply_markup: {
         inline_keyboard: [[{ text: "Done", callback_data: "finish_task_submit" }]]
@@ -312,7 +494,8 @@ async function showMenu(chatId) {
       ["🎯 Task", "🎁 Bonus"],
       ["💼 Trade", "💳 Set Wallet"],
       ["👥 Referral", "💰 Balance"],
-      ["ℹ️ About Us", "💬 Support", "📊 Stats"]
+      ["💸 Withdrawal", "📊 Stats"],
+      ["ℹ️ About Us", "💬 Support"]
     ],
     resize_keyboard: true
   };
@@ -351,12 +534,34 @@ async function handleBalance(chatId, userId) {
   await bot.sendMessage(chatId, `${CURRENCY_SYMBOL} Balance: ${user.balance || 0}\nWallet: ${user.wallet || "(not set)"}`);
 }
 
+async function handleWithdrawalMenu(chatId, userId) {
+  if (!botSettings.withdrawalOpen) {
+    await bot.sendMessage(chatId, "❌ Withdrawals are currently closed.");
+    return;
+  }
+  await bot.sendMessage(chatId, "💸 To request withdrawal send:\n/requestwithdraw <amount>");
+}
+
 async function handleStats(chatId) {
   const totalUsers = Object.keys(usersDB).length;
   const verifiedUsers = Object.values(usersDB).filter(u => u.verified).length;
-  const totalTasks = botSettings.tasksSubmitted;
+  const now = Date.now();
+  const onlineUsers = Object.values(usersDB).filter(u => (now - u.lastSeen) < 300000).length;
+  const offlineUsers = totalUsers - onlineUsers;
   
-  await bot.sendMessage(chatId, `📊 Bot Statistics:\n\nTotal Users: ${totalUsers}\nVerified Users: ${verifiedUsers}\nTasks Submitted: ${totalTasks}`);
+  const systemHealth = analyzeSystemHealth();
+  const totalBalance = Object.values(usersDB).reduce((sum, u) => sum + (Number(u.balance) || 0), 0);
+  
+  const statsText = `📊 System Statistics\n\n` +
+    `Total Users: ${totalUsers}\n` +
+    `Real Users: ${systemHealth.realUsers}\n` +
+    `Suspicious Users: ${systemHealth.suspiciousUsers}\n` +
+    `Users Online: ${onlineUsers}\n` +
+    `Users Offline: ${offlineUsers}\n` +
+    `Total Balance: ${totalBalance}\n\n` +
+    `Progress Score: ${systemHealth.score}`;
+  
+  await bot.sendMessage(chatId, statsText);
 }
 
 async function finishTaskSubmit(userId, chatId) {
@@ -366,7 +571,23 @@ async function finishTaskSubmit(userId, chatId) {
     return;
   }
 
-  const msg = `📝 New Task Submission\nUser ID: ${userId}\n\nDescription:\n${pending.text || "(no description)"}`;
+  const userIdentifier = await getUserIdentifier(userId);
+  const msg = `📝 New Task Submission\nUser: ${userIdentifier}\n\nDescription:\n${pending.text || "(no description)"}`;
+  
+  if (!taskSubmissions[userId]) {
+    taskSubmissions[userId] = [];
+  }
+  
+  const submission = {
+    userId: userId,
+    text: pending.text,
+    files: pending.files,
+    status: 'pending',
+    timestamp: Date.now()
+  };
+  
+  taskSubmissions[userId].push(submission);
+
   const inlineKeyboard = {
     inline_keyboard: [[
       { text: "✅ Confirm", callback_data: `task_confirm:${userId}` },
@@ -374,7 +595,7 @@ async function finishTaskSubmit(userId, chatId) {
     ]]
   };
 
-  await bot.sendMessage(TASK_REVIEW_CHANNEL, msg);
+  await bot.sendMessage(TASK_REVIEW_CHANNEL, msg, { reply_markup: inlineKeyboard });
   
   if (pending.files && pending.files.length > 0) {
     for (const fileId of pending.files) {
@@ -384,28 +605,12 @@ async function finishTaskSubmit(userId, chatId) {
     }
   }
 
-  await bot.sendMessage(ADMIN_GROUP_ID, msg);
-  
-  if (pending.files && pending.files.length > 0) {
-    for (const fileId of pending.files) {
-      try {
-        await bot.sendPhoto(ADMIN_GROUP_ID, fileId);
-      } catch (e) {}
-    }
-  }
-
-  await bot.sendMessage(ADMIN_GROUP_ID, "Admin review required:", { reply_markup: inlineKeyboard });
-
   botSettings.tasksSubmitted++;
   await bot.sendMessage(chatId, "✅ Your submission has been sent for review.");
   delete pendingTasks[userId];
 }
 
 async function handleAdminTaskConfirm(adminId, targetId, chatId) {
-  if (chatId !== ADMIN_GROUP_ID) {
-    await sendEphemeralWarning(chatId, "⚠️ This must be done in the admin group.");
-    return;
-  }
   if (!isAdminId(adminId)) {
     await sendEphemeralWarning(chatId, "⛔ You are not authorized!");
     return;
@@ -414,50 +619,54 @@ async function handleAdminTaskConfirm(adminId, targetId, chatId) {
   const reward = botSettings.taskReward;
   const target = ensureUser(targetId);
   target.balance = Number(target.balance || 0) + reward;
+  
+  if (taskSubmissions[targetId] && taskSubmissions[targetId].length > 0) {
+    const lastSubmission = taskSubmissions[targetId][taskSubmissions[targetId].length - 1];
+    if (lastSubmission.status === 'pending') {
+      lastSubmission.status = 'approved';
+      botSettings.tasksApproved++;
+    }
+  }
 
   try {
     await bot.sendMessage(targetId, `✅ Your task has been approved. Reward: ${reward}`);
   } catch (e) {}
 
-  await bot.sendMessage(ADMIN_GROUP_ID, `✅ Task approved for user: ${targetId}`);
-  await logAdmin(`Task approved for user: ${targetId} by admin: ${adminId}`);
+  const userIdentifier = await getUserIdentifier(targetId);
+  const adminIdentifier = await getUserIdentifier(adminId);
+  
+  await logAdmin(`Task approved for user: ${userIdentifier} by admin: ${adminIdentifier}`);
 }
 
 async function handleAdminTaskReject(adminId, targetId, chatId) {
-  if (chatId !== ADMIN_GROUP_ID) {
-    await sendEphemeralWarning(chatId, "⚠️ This must be done in the admin group.");
-    return;
-  }
   if (!isAdminId(adminId)) {
     await sendEphemeralWarning(chatId, "⛔ You are not authorized!");
     return;
+  }
+  
+  if (taskSubmissions[targetId] && taskSubmissions[targetId].length > 0) {
+    const lastSubmission = taskSubmissions[targetId][taskSubmissions[targetId].length - 1];
+    if (lastSubmission.status === 'pending') {
+      lastSubmission.status = 'rejected';
+      botSettings.tasksRejected++;
+    }
   }
 
   try {
     await bot.sendMessage(targetId, "❌ Your task submission was rejected by admin.");
   } catch (e) {}
 
-  await bot.sendMessage(ADMIN_GROUP_ID, `❌ Task rejected for user: ${targetId}`);
-  await logAdmin(`Task rejected for user: ${targetId} by admin: ${adminId}`);
+  const userIdentifier = await getUserIdentifier(targetId);
+  const adminIdentifier = await getUserIdentifier(adminId);
+  
+  await logAdmin(`Task rejected for user: ${userIdentifier} by admin: ${adminIdentifier}`);
 }
-
-bot.onText(/\/withdraw/, async (msg) => {
-  const chatId = msg.chat.id;
-  const userId = msg.from.id;
-
-  if (!botSettings.withdrawalOpen) {
-    await bot.sendMessage(chatId, "❌ Withdrawals are currently closed.");
-    return;
-  }
-
-  await bot.sendMessage(chatId, "💸 To request withdrawal send: /requestwithdraw <amount>");
-});
 
 bot.onText(/\/requestwithdraw (.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
   const amount = Number(match[1]);
-  const user = ensureUser(userId);
+  const user = ensureUser(userId, msg.from.username);
 
   if (!botSettings.withdrawalOpen) {
     await bot.sendMessage(chatId, "❌ Withdrawals are closed.");
@@ -469,6 +678,7 @@ bot.onText(/\/requestwithdraw (.+)/, async (msg, match) => {
     return;
   }
 
+  const userIdentifier = await getUserIdentifier(userId);
   const inlineKeyboard = {
     inline_keyboard: [[
       { text: "✅ Approve", callback_data: `withdraw_confirm:${userId}:${amount}` },
@@ -477,11 +687,7 @@ bot.onText(/\/requestwithdraw (.+)/, async (msg, match) => {
   };
 
   await bot.sendMessage(WITHDRAW_REVIEW_CHANNEL, 
-    `💸 Withdrawal request\nUser: ${userId}\nAmount: ${amount}\nWallet: ${user.wallet || "(not set)"}`
-  );
-
-  await bot.sendMessage(ADMIN_GROUP_ID,
-    `💸 Withdrawal request\nUser: ${userId}\nAmount: ${amount}\nWallet: ${user.wallet || "(not set)"}`,
+    `💸 Withdrawal request\nUser: ${userIdentifier}\nAmount: ${amount}\nWallet: ${user.wallet || "(not set)"}`,
     { reply_markup: inlineKeyboard }
   );
 
@@ -489,10 +695,6 @@ bot.onText(/\/requestwithdraw (.+)/, async (msg, match) => {
 });
 
 async function handleAdminWithdrawConfirm(adminId, targetId, amount, chatId) {
-  if (chatId !== ADMIN_GROUP_ID) {
-    await sendEphemeralWarning(chatId, "⚠️ This must be done in the admin group.");
-    return;
-  }
   if (!isAdminId(adminId)) {
     await sendEphemeralWarning(chatId, "⛔ You are not authorized!");
     return;
@@ -500,7 +702,7 @@ async function handleAdminWithdrawConfirm(adminId, targetId, amount, chatId) {
 
   const user = ensureUser(targetId);
   if (Number(user.balance || 0) < amount) {
-    await bot.sendMessage(ADMIN_GROUP_ID, "Insufficient funds or user not found.");
+    await sendEphemeralWarning(chatId, "Insufficient funds or user not found.");
     return;
   }
 
@@ -510,15 +712,13 @@ async function handleAdminWithdrawConfirm(adminId, targetId, amount, chatId) {
     await bot.sendMessage(targetId, `✅ Your withdrawal of ${amount} has been approved by admin.`);
   } catch (e) {}
 
-  await bot.sendMessage(ADMIN_GROUP_ID, `✅ Withdrawal approved for user: ${targetId} amount: ${amount}`);
-  await logAdmin(`Withdrawal approved for user: ${targetId} amount: ${amount} by admin: ${adminId}`);
+  const userIdentifier = await getUserIdentifier(targetId);
+  const adminIdentifier = await getUserIdentifier(adminId);
+  
+  await logAdmin(`Withdrawal approved for user: ${userIdentifier} amount: ${amount} by admin: ${adminIdentifier}`);
 }
 
 async function handleAdminWithdrawReject(adminId, targetId, chatId) {
-  if (chatId !== ADMIN_GROUP_ID) {
-    await sendEphemeralWarning(chatId, "⚠️ This must be done in the admin group.");
-    return;
-  }
   if (!isAdminId(adminId)) {
     await sendEphemeralWarning(chatId, "⛔ You are not authorized!");
     return;
@@ -528,14 +728,16 @@ async function handleAdminWithdrawReject(adminId, targetId, chatId) {
     await bot.sendMessage(targetId, "❌ Your withdrawal request was rejected by admin.");
   } catch (e) {}
 
-  await bot.sendMessage(ADMIN_GROUP_ID, `❌ Withdrawal rejected for user: ${targetId}`);
-  await logAdmin(`Withdrawal rejected for user: ${targetId} by admin: ${adminId}`);
+  const userIdentifier = await getUserIdentifier(targetId);
+  const adminIdentifier = await getUserIdentifier(adminId);
+  
+  await logAdmin(`Withdrawal rejected for user: ${userIdentifier} by admin: ${adminIdentifier}`);
 }
 
-bot.onText(/\/addbalance (\d+) (.+)/, async (msg, match) => {
+bot.onText(/\/addbalance (.+) (.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
-  const targetId = match[1];
+  const targetInput = match[1];
   const amount = Number(match[2]);
 
   if (chatId !== ADMIN_GROUP_ID) {
@@ -544,19 +746,29 @@ bot.onText(/\/addbalance (\d+) (.+)/, async (msg, match) => {
   }
   if (!isAdminId(userId)) {
     await sendEphemeralWarning(chatId, "⛔ You are not authorized!");
+    return;
+  }
+
+  const targetId = await resolveUserInput(targetInput);
+  if (!targetId) {
+    await sendAutoDeleteMessage(chatId, "❌ User not found.");
     return;
   }
 
   const user = ensureUser(targetId);
   user.balance = Number(user.balance || 0) + amount;
-  await bot.sendMessage(ADMIN_GROUP_ID, `✅ Added ${amount} to user ${targetId}`);
-  await logAdmin(`addbalance ${targetId} ${amount} by ${userId}`);
+  
+  const userIdentifier = await getUserIdentifier(targetId);
+  const adminIdentifier = await getUserIdentifier(userId);
+  
+  await sendAutoDeleteMessage(chatId, `✅ Added ${amount} to user ${userIdentifier}`);
+  await logAdmin(`addbalance ${userIdentifier} ${amount} by ${adminIdentifier}`);
 });
 
-bot.onText(/\/deductbalance (\d+) (.+)/, async (msg, match) => {
+bot.onText(/\/deductbalance (.+) (.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
-  const targetId = match[1];
+  const targetInput = match[1];
   const amount = Number(match[2]);
 
   if (chatId !== ADMIN_GROUP_ID) {
@@ -565,14 +777,24 @@ bot.onText(/\/deductbalance (\d+) (.+)/, async (msg, match) => {
   }
   if (!isAdminId(userId)) {
     await sendEphemeralWarning(chatId, "⛔ You are not authorized!");
+    return;
+  }
+
+  const targetId = await resolveUserInput(targetInput);
+  if (!targetId) {
+    await sendAutoDeleteMessage(chatId, "❌ User not found.");
     return;
   }
 
   const user = ensureUser(targetId);
   user.balance = Number(user.balance || 0) - amount;
   if (user.balance < 0) user.balance = 0;
-  await bot.sendMessage(ADMIN_GROUP_ID, `✅ Deducted ${amount} from user ${targetId}`);
-  await logAdmin(`deductbalance ${targetId} ${amount} by ${userId}`);
+  
+  const userIdentifier = await getUserIdentifier(targetId);
+  const adminIdentifier = await getUserIdentifier(userId);
+  
+  await sendAutoDeleteMessage(chatId, `✅ Deducted ${amount} from user ${userIdentifier}`);
+  await logAdmin(`deductbalance ${userIdentifier} ${amount} by ${adminIdentifier}`);
 });
 
 bot.onText(/\/openwithdrawal/, async (msg) => {
@@ -589,8 +811,10 @@ bot.onText(/\/openwithdrawal/, async (msg) => {
   }
 
   botSettings.withdrawalOpen = true;
-  await bot.sendMessage(ADMIN_GROUP_ID, "🔓 Withdrawals are now OPEN.");
-  await logAdmin(`openwithdrawal by ${userId}`);
+  const adminIdentifier = await getUserIdentifier(userId);
+  
+  await sendAutoDeleteMessage(chatId, "🔓 Withdrawals are now OPEN.");
+  await logAdmin(`openwithdrawal by ${adminIdentifier}`);
 });
 
 bot.onText(/\/closewithdrawal/, async (msg) => {
@@ -607,8 +831,10 @@ bot.onText(/\/closewithdrawal/, async (msg) => {
   }
 
   botSettings.withdrawalOpen = false;
-  await bot.sendMessage(ADMIN_GROUP_ID, "🔒 Withdrawals are now CLOSED.");
-  await logAdmin(`closewithdrawal by ${userId}`);
+  const adminIdentifier = await getUserIdentifier(userId);
+  
+  await sendAutoDeleteMessage(chatId, "🔒 Withdrawals are now CLOSED.");
+  await logAdmin(`closewithdrawal by ${adminIdentifier}`);
 });
 
 bot.onText(/\/broadcast (.+)/, async (msg, match) => {
@@ -633,14 +859,17 @@ bot.onText(/\/broadcast (.+)/, async (msg, match) => {
     } catch (e) {}
   }
 
-  await bot.sendMessage(ADMIN_GROUP_ID, `📣 Broadcast sent to ${count} users.`);
-  await logAdmin(`broadcast by ${userId} message: ${message}`);
+  const adminIdentifier = await getUserIdentifier(userId);
+  
+  await sendAutoDeleteMessage(chatId, `📣 Broadcast sent to ${count} users.`);
+  await logAdmin(`broadcast by ${adminIdentifier} message: ${message}`);
 });
 
-bot.onText(/\/addtask (.+)/, async (msg, match) => {
+bot.onText(/\/addtask (.+) (\d+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
   const task = match[1];
+  const reward = Number(match[2]);
 
   if (chatId !== ADMIN_GROUP_ID) {
     await sendEphemeralWarning(chatId, "⚠️ Run inside admin group only.");
@@ -651,9 +880,12 @@ bot.onText(/\/addtask (.+)/, async (msg, match) => {
     return;
   }
 
-  await bot.sendMessage(TASK_REVIEW_CHANNEL, `🎯 New Task: ${task}`);
-  await bot.sendMessage(ADMIN_GROUP_ID, "✅ Task posted to review channel.");
-  await logAdmin(`addtask by ${userId} task: ${task}`);
+  botSettings.taskReward = reward;
+  const adminIdentifier = await getUserIdentifier(userId);
+  
+  await bot.sendMessage(TASK_REVIEW_CHANNEL, `🎯 New Task: ${task}\nReward: ${reward}`);
+  await sendAutoDeleteMessage(chatId, "✅ Task posted to review channel.");
+  await logAdmin(`addtask by ${adminIdentifier} task: ${task} reward: ${reward}`);
 });
 
 bot.onText(/\/updatereward (.+)/, async (msg, match) => {
@@ -671,8 +903,224 @@ bot.onText(/\/updatereward (.+)/, async (msg, match) => {
   }
 
   botSettings.taskReward = amount;
-  await bot.sendMessage(ADMIN_GROUP_ID, `✅ Task reward updated to ${amount}`);
-  await logAdmin(`updatereward ${amount} by ${userId}`);
+  const adminIdentifier = await getUserIdentifier(userId);
+  
+  await sendAutoDeleteMessage(chatId, `✅ Task reward updated to ${amount}`);
+  await logAdmin(`updatereward ${amount} by ${adminIdentifier}`);
+});
+
+bot.onText(/\/approvealltask/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  if (chatId !== ADMIN_GROUP_ID) {
+    await sendEphemeralWarning(chatId, "⚠️ Run inside admin group only.");
+    return;
+  }
+  if (!isAdminId(userId)) {
+    await sendEphemeralWarning(chatId, "⛔ You are not authorized!");
+    return;
+  }
+
+  let count = 0;
+  for (const uid in taskSubmissions) {
+    const submissions = taskSubmissions[uid];
+    for (const sub of submissions) {
+      if (sub.status === 'pending') {
+        sub.status = 'approved';
+        const user = ensureUser(uid);
+        user.balance = Number(user.balance || 0) + botSettings.taskReward;
+        botSettings.tasksApproved++;
+        count++;
+        
+        try {
+          await bot.sendMessage(uid, `✅ Your task has been approved. Reward: ${botSettings.taskReward}`);
+        } catch (e) {}
+      }
+    }
+  }
+
+  const adminIdentifier = await getUserIdentifier(userId);
+  
+  await sendAutoDeleteMessage(chatId, `✅ Approved ${count} pending tasks.`);
+  await logAdmin(`approvealltask by ${adminIdentifier} - ${count} tasks approved`);
+});
+
+bot.onText(/\/rejectalltask/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  if (chatId !== ADMIN_GROUP_ID) {
+    await sendEphemeralWarning(chatId, "⚠️ Run inside admin group only.");
+    return;
+  }
+  if (!isAdminId(userId)) {
+    await sendEphemeralWarning(chatId, "⛔ You are not authorized!");
+    return;
+  }
+
+  let count = 0;
+  for (const uid in taskSubmissions) {
+    const submissions = taskSubmissions[uid];
+    for (const sub of submissions) {
+      if (sub.status === 'pending') {
+        sub.status = 'rejected';
+        botSettings.tasksRejected++;
+        count++;
+        
+        try {
+          await bot.sendMessage(uid, "❌ Your task submission was rejected by admin.");
+        } catch (e) {}
+      }
+    }
+  }
+
+  const adminIdentifier = await getUserIdentifier(userId);
+  
+  await sendAutoDeleteMessage(chatId, `✅ Rejected ${count} pending tasks.`);
+  await logAdmin(`rejectalltask by ${adminIdentifier} - ${count} tasks rejected`);
+});
+
+bot.onText(/\/approvetask (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  const targetInput = match[1];
+
+  if (chatId !== ADMIN_GROUP_ID) {
+    await sendEphemeralWarning(chatId, "⚠️ Run inside admin group only.");
+    return;
+  }
+  if (!isAdminId(userId)) {
+    await sendEphemeralWarning(chatId, "⛔ You are not authorized!");
+    return;
+  }
+
+  const targetId = await resolveUserInput(targetInput);
+  if (!targetId) {
+    await sendAutoDeleteMessage(chatId, "❌ User not found.");
+    return;
+  }
+
+  await handleAdminTaskConfirm(userId, targetId, chatId);
+  
+  const userIdentifier = await getUserIdentifier(targetId);
+  await sendAutoDeleteMessage(chatId, `✅ Task approved for ${userIdentifier}`);
+});
+
+bot.onText(/\/rejecttask (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  const targetInput = match[1];
+
+  if (chatId !== ADMIN_GROUP_ID) {
+    await sendEphemeralWarning(chatId, "⚠️ Run inside admin group only.");
+    return;
+  }
+  if (!isAdminId(userId)) {
+    await sendEphemeralWarning(chatId, "⛔ You are not authorized!");
+    return;
+  }
+
+  const targetId = await resolveUserInput(targetInput);
+  if (!targetId) {
+    await sendAutoDeleteMessage(chatId, "❌ User not found.");
+    return;
+  }
+
+  await handleAdminTaskReject(userId, targetId, chatId);
+  
+  const userIdentifier = await getUserIdentifier(targetId);
+  await sendAutoDeleteMessage(chatId, `✅ Task rejected for ${userIdentifier}`);
+});
+
+bot.onText(/\/taskstats/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  if (chatId !== ADMIN_GROUP_ID) {
+    await sendEphemeralWarning(chatId, "⚠️ Run inside admin group only.");
+    return;
+  }
+  if (!isAdminId(userId)) {
+    await sendEphemeralWarning(chatId, "⛔ You are not authorized!");
+    return;
+  }
+
+  const totalSubmissions = botSettings.tasksSubmitted;
+  const approved = botSettings.tasksApproved;
+  const rejected = botSettings.tasksRejected;
+  const pending = totalSubmissions - approved - rejected;
+  
+  const approvalRate = totalSubmissions > 0 ? (approved / totalSubmissions) * 100 : 0;
+  const score = getStarRating(approvalRate);
+  
+  const statsText = `📊 Task Statistics\n\n` +
+    `Total Submissions: ${totalSubmissions}\n` +
+    `Pending: ${pending}\n` +
+    `Rejected: ${rejected}\n` +
+    `Approved: ${approved}\n\n` +
+    `Score: ${score}`;
+  
+  await bot.sendMessage(chatId, statsText);
+});
+
+bot.onText(/\/balance (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  const targetInput = match[1];
+
+  if (!isAdminId(userId)) {
+    await sendEphemeralWarning(chatId, "⛔ You are not authorized!");
+    return;
+  }
+
+  const targetId = await resolveUserInput(targetInput);
+  if (!targetId) {
+    await bot.sendMessage(chatId, "❌ User not found.");
+    return;
+  }
+
+  const user = ensureUser(targetId);
+  const userIdentifier = await getUserIdentifier(targetId);
+  
+  await bot.sendMessage(chatId, 
+    `${CURRENCY_SYMBOL} Balance for ${userIdentifier}:\n` +
+    `Balance: ${user.balance || 0}\n` +
+    `Wallet: ${user.wallet || "(not set)"}`
+  );
+});
+
+bot.onText(/\/referral (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  const targetInput = match[1];
+
+  if (!isAdminId(userId)) {
+    await sendEphemeralWarning(chatId, "⛔ You are not authorized!");
+    return;
+  }
+
+  const targetId = await resolveUserInput(targetInput);
+  if (!targetId) {
+    await bot.sendMessage(chatId, "❌ User not found.");
+    return;
+  }
+
+  const analysis = analyzeReferralPattern(targetId);
+  const userIdentifier = await getUserIdentifier(targetId);
+  
+  const refText = `👥 Referral Analysis for ${userIdentifier}\n\n` +
+    `Total Referrals: ${(usersDB[targetId].referrals || []).length}\n` +
+    `Real Refs: ${analysis.realRefs}\n` +
+    `Suspicious Refs: ${analysis.suspiciousRefs}\n\n` +
+    `Score: ${analysis.score}`;
+  
+  await bot.sendMessage(chatId, refText);
+});
+
+bot.onText(/\/stats/, async (msg) => {
+  const chatId = msg.chat.id;
+  await handleStats(chatId);
 });
 
 bot.onText(/\/menu/, async (msg) => {
