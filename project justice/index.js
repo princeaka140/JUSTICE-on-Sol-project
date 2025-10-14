@@ -1218,4 +1218,223 @@ bot.onText(/\/pendingsubmissions/, async (msg) => {
   await bot.sendMessage(chatId, text);
 });
 
+bot.onText(/\/openwithdrawal/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  if (!isAdminId(userId)) {
+    await sendEphemeralWarning(chatId, "⛔ Admin only!");
+    return;
+  }
+
+  await db.setSetting('withdrawalOpen', 'true');
+  await bot.sendMessage(chatId, "✅ Withdrawals are now OPEN.");
+  await logAdmin('Withdrawals opened by admin');
+});
+
+bot.onText(/\/closewithdrawal/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  if (!isAdminId(userId)) {
+    await sendEphemeralWarning(chatId, "⛔ Admin only!");
+    return;
+  }
+
+  await db.setSetting('withdrawalOpen', 'false');
+  await bot.sendMessage(chatId, "❌ Withdrawals are now CLOSED.");
+  await logAdmin('Withdrawals closed by admin');
+});
+
+bot.onText(/\/stats/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  if (!isAdminId(userId)) {
+    await handleStats(chatId);
+    return;
+  }
+
+  const allUsers = await db.getAllUsers();
+  const totalUsers = allUsers.length;
+  const verifiedUsers = allUsers.filter(u => u.verified).length;
+  const now = Date.now();
+  const onlineUsers = allUsers.filter(u => (now - u.last_seen) < 300000).length;
+  const offlineUsers = totalUsers - onlineUsers;
+  
+  const systemHealth = await analyzeSystemHealth();
+  const totalBalance = await db.getTotalBalance();
+  
+  const tasksSubmitted = await db.getSetting('tasksSubmitted') || 0;
+  const tasksApproved = await db.getSetting('tasksApproved') || 0;
+  const tasksRejected = await db.getSetting('tasksRejected') || 0;
+  
+  const statsText = `📊 Admin Statistics\n\n` +
+    `👥 Users:\n` +
+    `Total Users: ${totalUsers}\n` +
+    `Verified: ${verifiedUsers}\n` +
+    `Real Users: ${systemHealth.realUsers}\n` +
+    `Suspicious: ${systemHealth.suspiciousUsers}\n` +
+    `Online: ${onlineUsers}\n` +
+    `Offline: ${offlineUsers}\n\n` +
+    `💰 Balance:\n` +
+    `Total Balance: ${totalBalance} ${CURRENCY_SYMBOL}\n\n` +
+    `📝 Tasks:\n` +
+    `Submitted: ${tasksSubmitted}\n` +
+    `Approved: ${tasksApproved}\n` +
+    `Rejected: ${tasksRejected}\n\n` +
+    `Quality Score: ${systemHealth.score}`;
+  
+  await bot.sendMessage(chatId, statsText);
+});
+
+bot.onText(/\/referral\s+(.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  if (!isAdminId(userId)) {
+    await sendEphemeralWarning(chatId, "⛔ Admin only!");
+    return;
+  }
+
+  const input = match[1].trim();
+  const targetId = await resolveUserInput(input);
+
+  if (!targetId) {
+    await bot.sendMessage(chatId, "❌ User not found.");
+    return;
+  }
+
+  const user = await db.getUser(targetId);
+  
+  if (!user) {
+    await bot.sendMessage(chatId, "❌ User not found.");
+    return;
+  }
+
+  const refAnalysis = await analyzeReferralPattern(targetId);
+  const refCount = await db.getReferralCount(targetId);
+  const userIdentifier = await getUserIdentifier(targetId);
+
+  const refText = `👥 Referral Analysis for ${userIdentifier}\n\n` +
+    `Total Referrals: ${refCount}\n` +
+    `Real Refs: ${refAnalysis.realRefs}\n` +
+    `Suspicious Refs: ${refAnalysis.suspiciousRefs}\n\n` +
+    `Score: ${refAnalysis.score}`;
+
+  await bot.sendMessage(chatId, refText);
+});
+
+bot.onText(/\/leaderboard/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  if (!isAdminId(userId)) {
+    await sendEphemeralWarning(chatId, "⛔ Admin only!");
+    return;
+  }
+
+  const allUsers = await db.getAllUsers();
+  
+  const sortedByBalance = allUsers
+    .sort((a, b) => parseFloat(b.balance) - parseFloat(a.balance))
+    .slice(0, 10);
+
+  let leaderboardText = `🏆 Top 10 Users by Balance\n\n`;
+  
+  for (let i = 0; i < sortedByBalance.length; i++) {
+    const user = sortedByBalance[i];
+    const userIdentifier = await getUserIdentifier(user.id);
+    leaderboardText += `${i + 1}. ${userIdentifier}\n   Balance: ${user.balance} ${CURRENCY_SYMBOL}\n\n`;
+  }
+
+  await bot.sendMessage(chatId, leaderboardText);
+});
+
+bot.onText(/\/aboutus/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  if (!isAdminId(userId)) {
+    await sendEphemeralWarning(chatId, "⛔ Admin only!");
+    return;
+  }
+
+  const aboutText = `ℹ️ About JUSTICE on Sol\n\n` +
+    `${BOT_NAME} is a community-driven bot that helps fight fraud and unfairness in the crypto space.\n\n` +
+    `About Us Link: ${ABOUT_US_URL}`;
+
+  await bot.sendMessage(chatId, aboutText);
+});
+
+bot.onText(/\/support/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  if (!isAdminId(userId)) {
+    await sendEphemeralWarning(chatId, "⛔ Admin only!");
+    return;
+  }
+
+  const supportText = `💬 Support Information\n\n` +
+    `Support Link: ${SUPPORT_URL}\n\n` +
+    `For assistance, please contact our support team.`;
+
+  await bot.sendMessage(chatId, supportText);
+});
+
+bot.onText(/\/bonus\s+(.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  if (!isAdminId(userId)) {
+    await sendEphemeralWarning(chatId, "⛔ Admin only!");
+    return;
+  }
+
+  const newBonus = parseFloat(match[1]);
+
+  if (isNaN(newBonus) || newBonus < 0) {
+    await bot.sendMessage(chatId, "❌ Invalid bonus amount.");
+    return;
+  }
+
+  await db.setSetting('bonusAmount', newBonus.toString());
+  await bot.sendMessage(chatId, `✅ Daily bonus amount updated to ${newBonus} ${CURRENCY_SYMBOL}`);
+  await logAdmin(`Bonus amount updated to ${newBonus}`);
+});
+
+bot.onText(/\/referralreward\s+(.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  if (!isAdminId(userId)) {
+    await sendEphemeralWarning(chatId, "⛔ Admin only!");
+    return;
+  }
+
+  const newReward = parseFloat(match[1]);
+
+  if (isNaN(newReward) || newReward < 0) {
+    await bot.sendMessage(chatId, "❌ Invalid reward amount.");
+    return;
+  }
+
+  await db.setSetting('referralReward', newReward.toString());
+  await bot.sendMessage(chatId, `✅ Referral reward updated to ${newReward} ${CURRENCY_SYMBOL}`);
+  await logAdmin(`Referral reward updated to ${newReward}`);
+});
+
+bot.on('message', async (msg) => {
+  if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
+    if (msg.from.id !== bot.options.polling.params.id) {
+      setTimeout(async () => {
+        try {
+          await bot.deleteMessage(msg.chat.id, msg.message_id);
+        } catch (e) {}
+      }, 30000);
+    }
+  }
+});
+
 console.log('Bot is running...');
