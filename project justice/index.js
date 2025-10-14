@@ -1428,12 +1428,25 @@ bot.onText(/\/referralreward\s+(.+)/, async (msg, match) => {
 bot.on('message', async (msg) => {
   if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
     if (!msg.from || msg.from.is_bot) return;
-      setTimeout(async () => {
-        try {
-          await bot.deleteMessage(msg.chat.id, msg.message_id);
-        } catch (e) {}
-      }, 30000);
-    }
-  });
+
+    const chatId = msg.chat.id;
+    const userMsgId = msg.message_id;
+
+    // 30 seconds later
+    setTimeout(async () => {
+      try {
+        // Delete user message
+        await bot.deleteMessage(chatId, userMsgId);
+
+        // Try deleting the next 3 messages (bot replies)
+        for (let i = 1; i <= 3; i++) {
+          try {
+            await bot.deleteMessage(chatId, userMsgId + i);
+          } catch (e) {}
+        }
+      } catch (e) {}
+    }, 30000);
+  }
+});
 
 console.log('Bot is running...');
