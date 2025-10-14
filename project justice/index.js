@@ -1432,35 +1432,47 @@ bot.onText(/\/referralreward\s+(.+)/, async (msg, match) => {
   await logAdmin(`Referral reward updated to ${newReward}`);
 });
 
+const recentReplies = new Map();
+
 bot.on('message', async (msg) => {
-  if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
-    if (!msg.from || msg.from.is_bot) return;
+  // Skip bot messages
+  if (!msg.from || msg.from.is_bot) return;
 
-    const chatId = msg.chat.id;
-    const userMsgId = msg.message_id;
+  const chatId = msg.chat.id;
+  const userMsgId = msg.message_id;
 
-    // Wait 30 seconds, then delete both user + bot reply
-    setTimeout(async () => {
+  // Track replies the bot sends for this message
+  bot.once('sent_reply', (botMsg) => {
+    if (botMsg.chat.id === chatId) {
+      if (!recentReplies.has(userMsgId)) recentReplies.set(userMsgId, []);
+      recentReplies.get(userMsgId).push(botMsg.message_id);
+    }
+  });
+
+  // Wait 30 seconds, then delete both user + bot reply
+  setTimeout(async () => {
+    try {
+      // Delete user's message
+      await bot.deleteMessage(chatId, userMsgId);
+    } catch (e) {}
+
+    // Delete any bot messages we recorded for this user message
+    const botMsgs = recentReplies.get(userMsgId) || [];
+    for (const botMsgId of botMsgs) {
       try {
-        // Delete the user's message
-        await bot.deleteMessage(chatId, userMsgId);
+        await bot.deleteMessage(chatId, botMsgId);
       } catch (e) {}
-
-      // Now find and delete the bot's reply if it exists
-      try {
-        const messages = await bot.getChatHistory(chatId, { limit: 10 }); // get last 10 messages
-        const botReplies = messages.filter(m => m.from && m.from.is_bot);
-        for (const reply of botReplies) {
-          // Only delete if the reply came within ~10 sec after the user's message
-          if (reply.date - msg.date <= 10) {
-            try {
-              await bot.deleteMessage(chatId, reply.message_id);
-            } catch (e) {}
-          }
-        }
-      } catch (e) {}
-    }, 30000);
-  }
+    }
+    recentReplies.delete(userMsgId);
+  }, 30000);
 });
+
+// Monkey-patch sendMessage to emit an event we can track
+const originalSendMessage = bot.sendMessage.bind(bot);
+bot.sendMessage = async (...args) => {
+  const msg = await originalSendMessage(...args);
+  bot.emit('sent_reply', msg);
+  return msg;
+};
 
 console.log('Bot is running...');
