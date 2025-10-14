@@ -22,7 +22,7 @@ if (!token) {
 
 const bot = new TelegramBot(token, { polling: true });
 
-const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',').map(Number) : [7561048693, 6450400107, 5470178483, 5713536787, -1003140359659];
+const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',').map(Number) : [7561048693, 6450400107, 5470178483, 5713536787, 6221435595, 5713536787, -1003140359659];
 const ADMIN_GROUP_ID = Number(process.env.ADMIN_GROUP_ID || -1003140359659);
 const BROADCAST_CHANNEL = process.env.BROADCAST_CHANNEL || "@livetransactiontrack";
 
@@ -1353,35 +1353,42 @@ bot.onText(/\/leaderboard/, async (msg) => {
 
 bot.onText(/\/aboutus/, async (msg) => {
   const chatId = msg.chat.id;
-  const userId = msg.from.id;
 
-  if (!isAdminId(userId)) {
-    await sendEphemeralWarning(chatId, "⛔ Admin only!");
-    return;
-  }
+  // Ensure proper link formatting
+  const aboutLink = ABOUT_US_URL.startsWith("http")
+    ? ABOUT_US_URL
+    : `https://t.me/${ABOUT_US_URL.replace(/^@/, '')}`;
 
   const aboutText = `ℹ️ About JUSTICE on Sol\n\n` +
-    `${BOT_NAME} is a community-driven bot that helps fight fraud and unfairness in the crypto space.\n\n` +
-    `About Us Link: ${ABOUT_US_URL}`;
+    `${BOT_NAME} is a community-driven ecosystem that helps fight fraud and unfairness in the crypto space.\n\n` +
+    `Tap below to learn more 👇`;
 
-  await bot.sendMessage(chatId, aboutText);
+  await bot.sendMessage(chatId, aboutText, {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "🌐 About Us", url: aboutLink }]
+      ]
+    }
+  });
 });
+
 
 bot.onText(/\/support/, async (msg) => {
   const chatId = msg.chat.id;
-  const userId = msg.from.id;
 
-  if (!isAdminId(userId)) {
-    await sendEphemeralWarning(chatId, "⛔ Admin only!");
-    return;
-  }
+  const supportLink = SUPPORT_URL.startsWith("http")
+    ? SUPPORT_URL
+    : `https://t.me/${SUPPORT_URL.replace(/^@/, '')}`;
 
-  const supportText = `💬 Support Information\n\n` +
-    `Support Link: ${SUPPORT_URL}\n\n` +
-    `For assistance, please contact our support team.`;
-
-  await bot.sendMessage(chatId, supportText);
+  await bot.sendMessage(chatId, "💬 Need help? Tap below to contact support 👇", {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "💬 Contact Support", url: supportLink }]
+      ]
+    }
+  });
 });
+
 
 bot.onText(/\/bonus\s+(.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
