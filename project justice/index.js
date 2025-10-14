@@ -1432,17 +1432,24 @@ bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const userMsgId = msg.message_id;
 
-    // 30 seconds later
+    // Wait 30 seconds, then delete both user + bot reply
     setTimeout(async () => {
       try {
-        // Delete user message
+        // Delete the user's message
         await bot.deleteMessage(chatId, userMsgId);
+      } catch (e) {}
 
-        // Try deleting the next 3 messages (bot replies)
-        for (let i = 1; i <= 3; i++) {
-          try {
-            await bot.deleteMessage(chatId, userMsgId + i);
-          } catch (e) {}
+      // Now find and delete the bot's reply if it exists
+      try {
+        const messages = await bot.getChatHistory(chatId, { limit: 10 }); // get last 10 messages
+        const botReplies = messages.filter(m => m.from && m.from.is_bot);
+        for (const reply of botReplies) {
+          // Only delete if the reply came within ~10 sec after the user's message
+          if (reply.date - msg.date <= 10) {
+            try {
+              await bot.deleteMessage(chatId, reply.message_id);
+            } catch (e) {}
+          }
         }
       } catch (e) {}
     }, 30000);
