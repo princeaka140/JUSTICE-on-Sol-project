@@ -1427,14 +1427,13 @@ bot.onText(/\/referralreward\s+(.+)/, async (msg, match) => {
 
 bot.on('message', async (msg) => {
   if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
-    if (msg.from.id !== bot.options.polling.params.id) {
+    if (!msg.from || msg.from.is_bot) return;
       setTimeout(async () => {
         try {
           await bot.deleteMessage(msg.chat.id, msg.message_id);
         } catch (e) {}
       }, 30000);
     }
-  }
-});
+  });
 
 console.log('Bot is running...');
