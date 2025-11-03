@@ -642,6 +642,200 @@ async function analyzeReferralPattern(userId) {
   };
 }
 
+/**
+ * Get detailed analysis of each referral with classification and scoring
+ */
+async function getDetailedReferralAnalysis(userId) {
+  const referrals = await getUserReferrals(userId);
+  const details = [];
+
+  for (const refId of referrals) {
+    const refUser = await getUser(refId);
+    
+    if (!refUser) {
+      details.push({
+        userId: refId,
+        username: null,
+        balance: 0,
+        wallet: null,
+        classification: 'Deleted User',
+        statusEmoji: '❌',
+        scoreStars: '❌',
+        totalScore: 0,
+        messageCount: 0,
+        completedTasks: 0,
+        activityScore: 0,
+        accountAge: 'Unknown',
+        verified: false,
+        hasWallet: false,
+        referralCount: 0,
+        totalWithdrawn: 0,
+        pendingWithdrawals: 0,
+        lastSeen: 'Never'
+      });
+      continue;
+    }
+
+    const messageCount = refUser.message_count || 0;
+    const activityScore = refUser.activity_score || 0;
+    const hasWallet = refUser.wallet && refUser.wallet.length > 0;
+    const isVerified = refUser.verified;
+    const accountAge = Date.now() - refUser.registered_at;
+    const hoursSinceRegistration = accountAge / (1000 * 60 * 60);
+    const daysSinceRegistration = accountAge / (1000 * 60 * 60 * 24);
+
+    // Get additional user stats
+    const completedTasks = await getUserCompletedTasks(refId);
+    const referralCount = await getReferralCount(refId);
+    const withdrawalStats = await getUserWithdrawalStats(refId);
+    
+    // Calculate detailed score (max 13 points)
+    let score = 0;
+    
+    // Message activity (0-3 points)
+    if (messageCount >= 10) score += 3;
+    else if (messageCount >= 5) score += 2;
+    else if (messageCount >= 1) score += 1;
+
+    // Activity score (0-2 points)
+    if (activityScore > 0.5) score += 2;
+    else if (activityScore > 0.1) score += 1;
+
+    // Wallet set (0-2 points)
+    if (hasWallet) score += 2;
+
+    // Verified status (0-2 points)
+    if (isVerified) score += 2;
+
+    // Account age (0-2 points)
+    if (hoursSinceRegistration > 24) score += 2;
+    else if (hoursSinceRegistration > 1) score += 1;
+
+    // Completed tasks (0-2 points)
+    if (completedTasks.length > 0) score += 2;
+
+    // Determine classification and emoji with enhanced fake detection
+    let classification, statusEmoji, scoreStars;
+    
+    // Enhanced fake detection logic
+    const isFake = (
+      messageCount === 0 && 
+      completedTasks.length === 0 && 
+      !isVerified && 
+      !hasWallet && 
+      hoursSinceRegistration < 1 &&
+      referralCount === 0
+    );
+    
+    const isLikelyBot = (
+      messageCount === 0 && 
+      completedTasks.length === 0 && 
+      hoursSinceRegistration < 24 &&
+      !isVerified
+    );
+    
+    if (isFake) {
+      classification = 'Fake';
+      statusEmoji = '🚫';
+      scoreStars = '❌';
+    } else if (score >= 8) {
+      classification = 'Real User';
+      statusEmoji = '✅';
+      scoreStars = '⭐⭐⭐⭐⭐';
+    } else if (score >= 5) {
+      classification = 'Real User';
+      statusEmoji = '✅';
+      scoreStars = '⭐⭐⭐⭐';
+    } else if (score >= 3) {
+      classification = 'Suspicious';
+      statusEmoji = '⚠️';
+      scoreStars = '⭐⭐⭐';
+    } else if (isLikelyBot) {
+      classification = 'Likely Bot';
+      statusEmoji = '🤖';
+      scoreStars = '⭐';
+    } else {
+      classification = 'Suspicious';
+      statusEmoji = '⚠️';
+      scoreStars = '⭐⭐';
+    }
+
+    // Format account age
+    let ageString;
+    if (daysSinceRegistration >= 1) {
+      ageString = `${Math.floor(daysSinceRegistration)}d`;
+    } else if (hoursSinceRegistration >= 1) {
+      ageString = `${Math.floor(hoursSinceRegistration)}h`;
+    } else {
+      ageString = `${Math.floor(hoursSinceRegistration * 60)}m`;
+    }
+
+    // Format last seen
+    const timeSinceLastSeen = Date.now() - refUser.last_seen;
+    const hoursSinceLastSeen = timeSinceLastSeen / (1000 * 60 * 60);
+    const daysSinceLastSeen = timeSinceLastSeen / (1000 * 60 * 60 * 24);
+    
+    let lastSeenString;
+    if (daysSinceLastSeen >= 1) {
+      lastSeenString = `${Math.floor(daysSinceLastSeen)}d ago`;
+    } else if (hoursSinceLastSeen >= 1) {
+      lastSeenString = `${Math.floor(hoursSinceLastSeen)}h ago`;
+    } else {
+      lastSeenString = `${Math.floor(hoursSinceLastSeen * 60)}m ago`;
+    }
+
+    details.push({
+      userId: refId,
+      username: refUser.username,
+      balance: parseFloat(refUser.balance) || 0,
+      wallet: refUser.wallet || null,
+      classification,
+      statusEmoji,
+      scoreStars,
+      totalScore: score,
+      messageCount,
+      completedTasks: completedTasks.length,
+      activityScore,
+      accountAge: ageString,
+      verified: isVerified,
+      hasWallet,
+      referralCount,
+      totalWithdrawn: withdrawalStats.totalWithdrawn,
+      pendingWithdrawals: withdrawalStats.pendingCount,
+      lastSeen: lastSeenString,
+      registeredAt: new Date(refUser.registered_at).toLocaleString()
+    });
+  }
+
+  // Sort by score (highest first)
+  details.sort((a, b) => b.totalScore - a.totalScore);
+
+  return details;
+}
+
+/**
+ * Get withdrawal statistics for a user
+ */
+async function getUserWithdrawalStats(userId) {
+  const result = await pool.query(
+    `SELECT 
+      COALESCE(SUM(CASE WHEN status = 'approved' THEN amount ELSE 0 END), 0) as total_withdrawn,
+      COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_count,
+      COUNT(CASE WHEN status = 'approved' THEN 1 END) as approved_count,
+      COUNT(CASE WHEN status = 'rejected' THEN 1 END) as rejected_count
+     FROM withdrawal_requests 
+     WHERE user_id = $1`,
+    [userId]
+  );
+  
+  return {
+    totalWithdrawn: parseFloat(result.rows[0].total_withdrawn) || 0,
+    pendingCount: parseInt(result.rows[0].pending_count) || 0,
+    approvedCount: parseInt(result.rows[0].approved_count) || 0,
+    rejectedCount: parseInt(result.rows[0].rejected_count) || 0
+  };
+}
+
 /* ----------------------- Verification advancement helper ----------------------- */
 async function verifyUserAndReward(refereeId) {
   const client = await pool.connect();
@@ -724,11 +918,13 @@ module.exports = {
   createWithdrawalRequest,
   getLatestPendingWithdrawal,
   updateWithdrawalStatus,
+  getUserWithdrawalStats,
   blacklistUser,
   unblacklistUser,
   isUserBlacklisted,
   getAllBlacklistedUsers,
   analyzeReferralPattern,
+  getDetailedReferralAnalysis,
   verifyUserAndReward,
   pool
 };
