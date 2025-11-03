@@ -977,10 +977,26 @@ async function finishTaskSubmit(userId, chatId) {
     await bot.sendMessage(chatId, "❌ Error: At least one image/screenshot is required. Please upload an image before submitting.");
     return;
   }
-
   const userIdentifier = await getUserIdentifier(userId);
-  const caption = `📝 New Task Submission\nUser: ${userIdentifier}\nTask: ${pending.taskTitle || 'Unknown'}\nReward: ${pending.taskReward || 0} ${CURRENCY_SYMBOL}\n\nDescription:\n${pending.text || "(no description)"}\n\nImages: ${pending.files.length}`;
-  
+
+// Get full task details from DB so we can include its original description
+const task = await db.getTaskById(pending.taskId);
+const taskDescription = task?.description || "(no task description)";
+const userDescription = pending.text && pending.text.trim() ? pending.text.trim() : "(no user comment)";
+
+const caption = `📝 <b>New Task Submission</b>
+User: ${userIdentifier}
+Task: <b>${pending.taskTitle || 'Unknown'}</b>
+Reward: ${pending.taskReward || 0} ${CURRENCY_SYMBOL}
+
+<b>Task Description:</b>
+${taskDescription}
+
+<b>User Comment:</b>
+${userDescription}
+
+<b>Images:</b> ${pending.files.length}`;
+
   const submission = await db.createTaskSubmission(
     userId,
     pending.taskId,
